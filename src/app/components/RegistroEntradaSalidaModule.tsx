@@ -151,23 +151,17 @@ export function RegistroEntradaSalidaModule() {
   const handleNFCRead = (data: NFCData) => {
     console.log('📱 NFC Data recibida:', data);
     
-    // Buscar personal por el ID leído
-    const persona = personalDB.find(p => p.cedula === data.id);
-    
-    if (persona) {
-      setPersonalEncontrado(persona);
-      setCedula(data.id);
-      setRegistroMensaje({
-        mensaje: `✅ Personal encontrado: ${persona.nombre} ${persona.apellido}`,
-        exito: true,
-        empleado: persona,
-      });
-    } else {
-      setRegistroMensaje({
-        mensaje: `❌ No se encontró personal con ID: ${data.id}`,
-        exito: false,
-      });
+    // Extraer el serial del arma de los datos del NFC
+    let armaSerial = data.id || data.rawData;
+    if (armaSerial.startsWith('Serial: ')) {
+      armaSerial = armaSerial.replace('Serial: ', '');
     }
+    
+    setSerial(armaSerial);
+    setRegistroMensaje({
+      mensaje: `✅ Armamento detectado. Serial: ${armaSerial}`,
+      exito: true,
+    });
   };
 
   // Manejar registro manual

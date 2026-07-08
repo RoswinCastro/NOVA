@@ -126,10 +126,12 @@ export const startNFCScan = (
                 // Intentar extraer ID del texto
                 const idMatch = textData.match(/ID[:#]\s*([A-Z0-9-]+)/i) || 
                                textData.match(/EMP[:#]\s*([A-Z0-9-]+)/i) ||
-                               textData.match(/([A-Z0-9]{6,12})/);
+                               textData.match(/SERIAL[:#]\s*([A-Z0-9-]+)/i);
                 
                 if (idMatch) {
                   nfcData.id = idMatch[1];
+                } else {
+                  nfcData.id=textData.trim();
                 }
               } catch (decodeError) {
                 console.error('Error decodificando texto:', decodeError);
