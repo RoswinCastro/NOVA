@@ -111,10 +111,11 @@ export const startNFCScan = (
 
           // Recorrer todos los registros del mensaje
           for (const record of message.records) {
-            console.log(`📱 NFC - Record Type: ${record.type}`);
+            const recordType = record.recordType || record.type;
+            console.log(`📱 NFC - Record Type: ${recordType}`);
             
             // Procesar diferentes tipos de registros
-            if (record.type === 'text') {
+            if (recordType === 'text') {
               try {
                 const textDecoder = new TextDecoder(record.encoding || 'utf-8');
                 const textData = textDecoder.decode(record.data);
@@ -137,7 +138,7 @@ export const startNFCScan = (
                 console.error('Error decodificando texto:', decodeError);
               }
             } 
-            else if (record.type === 'url') {
+            else if (recordType === 'url') {
               try {
                 const textDecoder = new TextDecoder('utf-8');
                 const urlData = textDecoder.decode(record.data);
@@ -149,7 +150,7 @@ export const startNFCScan = (
                 console.error('Error decodificando URL:', decodeError);
               }
             }
-            else if (record.type === 'mime') {
+            else if (recordType === 'mime') {
               try {
                 // Para datos MIME, intentar interpretar como texto
                 if (record.mediaType?.includes('text/')) {
@@ -164,11 +165,11 @@ export const startNFCScan = (
                 console.error('Error decodificando MIME:', decodeError);
               }
             }
-            else if (record.type === 'empty') {
+            else if (recordType === 'empty') {
               console.log('📱 NFC - Registro vacío');
             }
             else {
-              console.log('📱 NFC - Tipo no soportado:', record.type);
+              console.log('📱 NFC - Tipo no soportado:', recordType);
             }
           }
 

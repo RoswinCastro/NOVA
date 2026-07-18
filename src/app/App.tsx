@@ -16,6 +16,7 @@ import { AuthProvider, useAuth } from './components/AuthContext';
 function ContentApp() {
   const { user, logout } = useAuth();
   const [activeSection, setActiveSection] = useState('inicio');
+  const [barraLateralHorizontal, setBarraLateralHorizontal] = useState(false);
 
   // Si no hay usuario autenticado, mostrar Login
   if (!user) {
@@ -56,7 +57,12 @@ function ContentApp() {
       case 'configuracion':
         // Solo admin puede ver ajustes
         if (user.role === 'admin') {
-          return <AjustesModule />;
+          return (
+            <AjustesModule
+              barraLateralHorizontal={barraLateralHorizontal}
+              setBarraLateralHorizontal={setBarraLateralHorizontal}
+            />
+          );
         }
         return (
           <div className="text-center text-red-500">
@@ -69,11 +75,21 @@ function ContentApp() {
   };
 
   return (
-    <div className="size-full flex flex-col md:flex-row bg-white min-h-screen">
+    <div
+      className={`size-full bg-white min-h-screen ${
+        barraLateralHorizontal ? 'flex flex-col' : 'flex flex-col md:flex-row'
+      }`}
+    >
       {/* ============================================
       BARRA LATERAL (SIDEBAR)
       ============================================ */}
-      <div className="bg-[#0066ff] shadow-lg flex flex-row md:flex-col items-center p-2 md:py-6 gap-2 md:gap-6 w-full md:w-20 overflow-x-auto">
+      <div
+        className={`bg-[#0066ff] shadow-lg overflow-x-auto ${
+          barraLateralHorizontal
+            ? 'flex w-full flex-row items-center gap-2 p-2'
+            : 'flex w-full flex-row items-center gap-2 p-2 md:w-20 md:flex-col md:gap-6 md:py-6'
+        }`}
+      >
         {/* Botón Inicio */}
         <button 
           onClick={() => setActiveSection('inicio')} 
@@ -125,7 +141,7 @@ function ContentApp() {
         </button>
 
         {/* Separador en desktop */}
-        <div className="hidden md:flex flex-1"></div>
+        <div className={`${barraLateralHorizontal ? 'flex-1' : 'hidden md:flex flex-1'}`}></div>
 
         {/* Botón Ajustes (solo admin) */}
         {user.role === 'admin' && (

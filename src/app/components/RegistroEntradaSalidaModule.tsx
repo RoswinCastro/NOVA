@@ -1,77 +1,51 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Radio,
-  Loader2,
-  CheckCircle,
-  XCircle,
-  Info,
   AlertCircle,
-  User,
+  CheckCircle,
   Clock,
-  Calendar,
-  Smartphone,
-  RefreshCw,
+  Loader2,
+  Radio,
   Search,
-  Shield
+  Shield,
+  Smartphone,
+  User,
+  XCircle,
 } from 'lucide-react';
+import { type NFCData, useNFC } from '../services/nfcServices';
 import {
-  useNFC,
-  type NFCData,
-  isNFCSupported,
-  checkNFCPermissions
-} from '../services/nfcServices';
+  armasService,
+  extractErrorMessage,
+  movimientosService,
+  personalService,
+  type Arma,
+  type Movimiento,
+  type PersonalMilitar,
+} from '../services/databaseService';
 
-interface PersonalInfo {
-  cedula: string;
-  jerarquia: string;
-  nombre: string;
-  apellido: string;
-  compania: string;
+type ModoLectura = 'nfc' | 'manual';
+type TipoRegistro = 'entrada' | 'salida';
+
+interface RegistroMensaje {
+  mensaje: string;
+  exito: boolean;
 }
 
-interface RegistroEntradaSalida {
-  id: string;
-  fechaHora: string;
-  tipo: 'entrada' | 'salida';
-  cedula: string;
-  nombreCompleto: string;
-  jerarquia: string;
-  compania: string;
-  serial: string;
-  cargadores: number;
-  municiones: number;
-  motivo: string;
-  nfcConfirmado: boolean;
-}
-
-const personalDB: PersonalInfo[] = [
-  { cedula: '30763261', jerarquia: 'SLDDO', nombre: 'José', apellido: 'Lázaro', compania: '1ra Compañía' },
-  { cedula: '29557321', jerarquia: 'SLDDO', nombre: 'Gabriel', apellido: 'Marques', compania: '2da Compañía' },
-  { cedula: '34190900', jerarquia: 'S/1', nombre: 'David', apellido: 'Reyes', compania: '3ra Compañía' },
-  { cedula: '31559942', jerarquia: 'C/1', nombre: 'Nelson', apellido: 'Chirino', compania: '1ra Compañía' },
-  { cedula: '27881882', jerarquia: 'C/2', nombre: 'Mariángel', apellido: 'García', compania: '2da Compañía' },
-  { cedula: '30987119', jerarquia: 'SLDDO', nombre: 'Pedro', apellido: 'González', compania: '3ra Compañía' }
-];
-
-// COMPONENTE PRINCIPAL
 export function RegistroEntradaSalidaModule() {
-
-  const [modoLectura, setModoLectura] = useState<'nfc' | 'manual'>('nfc');
+  const [modoLectura, setModoLectura] = useState<ModoLectura>('nfc');
   const [cedula, setCedula] = useState('');
-  const [personalEncontrado, setPersonalEncontrado] = useState<PersonalInfo | null>(null);
   const [serial, setSerial] = useState('');
   const [cargadores, setCargadores] = useState('');
   const [municiones, setMuniciones] = useState('');
   const [motivo, setMotivo] = useState('');
-  const [tipoRegistro, setTipoRegistro] = useState<'entrada' | 'salida'>('entrada');
-  const [registros, setRegistros] = useState<RegistroEntradaSalida[]>([]);
-  const [registroMensaje, setRegistroMensaje] = useState<{
-    mensaje: string;
-    exito: boolean;
-    empleado?: PersonalInfo;
-  } | null>(null);
-
-  // NFC
+  const [tipoRegistro, setTipoRegistro] = useState<TipoRegistro>('entrada');
+  const [personalEncontrado, setPersonalEncontrado] = useState<PersonalMilitar | null>(null);
+  const [armaEncontrada, setArmaEncontrada] = useState<Arma | null>(null);
+  const [registros, setRegistros] = useState<Movimiento[]>([]);
+  const [registroMensaje, setRegistroMensaje] = useState<RegistroMensaje | null>(null);
+  const [isLoadingPersonal, setIsLoadingPersonal] = useState(false);
+  const [isLoadingArma, setIsLoadingArma] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingRegistros, setIsLoadingRegistros] = useState(true);
 
   const {
     isScanning,
@@ -84,100 +58,143 @@ export function RegistroEntradaSalidaModule() {
     resetData: resetNFCData,
   } = useNFC();
 
-  const buscarPersonal = () => {
-    const persona = personalDB.find(p => p.cedula === cedula);
-    if (persona) {
+  useEffect(() => {
+    void loadRecentMovements();
+  }, []);
+
+  useEffect(() => {
+    if (nfcData && !isScanning) {
+      void handleNFCRead(nfcData);
+    }
+  }, [isScanning, nfcData]);
+
+  async function loadRecentMovements() {
+    setIsLoadingRegistros(true);
+
+    try {
+      const response = await movimientosService.getUltimos(10);
+      setRegistros(response);
+    } catch (loadError) {
+      setRegistroMensaje({
+        mensaje: extractErrorMessage(loadError, 'No se pudieron cargar los registros recientes.'),
+        exito: false,
+      });
+      setRegistros([]);
+    } finally {
+      setIsLoadingRegistros(false);
+    }
+  }
+
+  async function buscarPersonal() {
+    if (!cedula.trim()) {
+      setRegistroMensaje({
+        mensaje: 'Ingrese la cédula del personal.',
+        exito: false,
+      });
+      setPersonalEncontrado(null);
+      return;
+    }
+
+    setIsLoadingPersonal(true);
+    setRegistroMensaje(null);
+
+    try {
+      const normalizedCedulas = buildCedulaCandidates(cedula);
+      let persona: PersonalMilitar | null = null;
+
+      for (const candidate of normalizedCedulas) {
+        persona = await personalService.getByCedula(candidate);
+        if (persona) {
+          break;
+        }
+      }
+
+      if (!persona) {
+        setPersonalEncontrado(null);
+        setRegistroMensaje({
+          mensaje: 'Personal no encontrado en la base de datos.',
+          exito: false,
+        });
+        return;
+      }
+
       setPersonalEncontrado(persona);
-      setRegistroMensaje(null);
-    } else {
+    } catch (searchError) {
       setPersonalEncontrado(null);
       setRegistroMensaje({
-        mensaje: '❌ Persona no encontrada en el sistema',
+        mensaje: extractErrorMessage(searchError, 'No se pudo buscar el personal.'),
         exito: false,
       });
+    } finally {
+      setIsLoadingPersonal(false);
     }
-  };
+  }
 
-  const procesarRegistro = (personal: PersonalInfo, tipo: 'entrada' | 'salida') => {
-    if (!serial || !cargadores || !municiones || !motivo) {
+  async function buscarArmaPorIdentificador(identificador: string) {
+    const value = identificador.trim();
+    if (!value) {
+      setArmaEncontrada(null);
       setRegistroMensaje({
-        mensaje: '⚠️ Complete todos los campos del arma',
+        mensaje: 'Ingrese o lea un serial/TAG NFC de arma.',
+        exito: false,
+      });
+      return null;
+    }
+
+    setIsLoadingArma(true);
+    setRegistroMensaje(null);
+
+    try {
+      const armaPorSerial = await armasService.getBySerial(value);
+      const arma = armaPorSerial || (await armasService.getByNFC(value));
+
+      if (!arma) {
+        setArmaEncontrada(null);
+        setRegistroMensaje({
+          mensaje: 'Arma no encontrada en la base de datos.',
+          exito: false,
+        });
+        return null;
+      }
+
+      setArmaEncontrada(arma);
+      setSerial(arma.SERIAL_ARMA);
+      return arma;
+    } catch (searchError) {
+      setArmaEncontrada(null);
+      setRegistroMensaje({
+        mensaje: extractErrorMessage(searchError, 'No se pudo buscar el arma.'),
+        exito: false,
+      });
+      return null;
+    } finally {
+      setIsLoadingArma(false);
+    }
+  }
+
+  async function handleNFCRead(data: NFCData) {
+    const identifier = data.id?.trim() || data.rawData?.trim();
+
+    if (!identifier) {
+      setRegistroMensaje({
+        mensaje: 'La lectura NFC no devolvió un identificador utilizable.',
         exito: false,
       });
       return;
     }
 
-    const ahora = new Date();
-    const dia = String(ahora.getDate()).padStart(2, '0');
-    const hora = String(ahora.getHours()).padStart(2, '0');
-    const minutos = String(ahora.getMinutes()).padStart(2, '0');
-    const meses = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
-    const mes = meses[ahora.getMonth()];
-    const ano = String(ahora.getFullYear()).slice(-2);
-    const fechaHoraGFM = `${dia}${hora}${minutos}${mes}${ano}`;
+    setSerial(identifier);
+    const arma = await buscarArmaPorIdentificador(identifier);
 
-    const nuevoRegistro: RegistroEntradaSalida = {
-      id: String(registros.length + 1),
-      fechaHora: fechaHoraGFM,
-      tipo: tipo,
-      cedula: personal.cedula,
-      nombreCompleto: `${personal.nombre} ${personal.apellido}`,
-      jerarquia: personal.jerarquia,
-      compania: personal.compania,
-      serial: serial,
-      cargadores: parseInt(cargadores),
-      municiones: parseInt(municiones),
-      motivo: motivo,
-      nfcConfirmado: true
-    };
-
-    setRegistros([nuevoRegistro, ...registros]);
-    setRegistroMensaje({
-      mensaje: `✅ ${tipo === 'entrada' ? 'Entrada' : 'Salida'} registrada exitosamente para ${personal.nombre} ${personal.apellido}`,
-      exito: true,
-      empleado: personal,
-    });
-
-    setPersonalEncontrado(null);
-    setCedula('');
-    setSerial('');
-    setCargadores('');
-    setMuniciones('');
-    setMotivo('');
-    resetNFCData();
-  };
-
-  // Manejar lectura NFC
-  const handleNFCRead = (data: NFCData) => {
-    console.log('📱 NFC Data recibida:', data);
-    
-    // Extraer el serial del arma de los datos del NFC
-    let armaSerial = data.id || data.rawData;
-    if (armaSerial.startsWith('Serial: ')) {
-      armaSerial = armaSerial.replace('Serial: ', '');
-    }
-    
-    setSerial(armaSerial);
-    setRegistroMensaje({
-      mensaje: `✅ Armamento detectado. Serial: ${armaSerial}`,
-      exito: true,
-    });
-  };
-
-  // Manejar registro manual
-  const handleManualRegistro = (tipo: 'entrada' | 'salida') => {
-    if (!personalEncontrado) {
+    if (arma) {
       setRegistroMensaje({
-        mensaje: '⚠️ Primero busque un empleado por cédula',
-        exito: false,
+        mensaje: `Etiqueta NFC procesada. Arma encontrada: ${arma.MODELO} (${arma.SERIAL_ARMA}).`,
+        exito: true,
       });
-      return;
     }
-    procesarRegistro(personalEncontrado, tipo);
-  };
+  }
 
-  // Iniciar escaneo NFC
-  const handleNFCScan = async () => {
+  async function handleNFCScan() {
     if (isScanning) {
       stopScan();
       return;
@@ -186,129 +203,181 @@ export function RegistroEntradaSalidaModule() {
     resetNFCData();
     setRegistroMensaje(null);
     await startScan();
-  };
+  }
 
-  // Efecto para procesar datos NFC cuando llegan
-  useEffect(() => {
-    if (nfcData && !isScanning) {
-      handleNFCRead(nfcData);
+  function clearFormAfterSubmit() {
+    setCedula('');
+    setSerial('');
+    setCargadores('');
+    setMuniciones('');
+    setMotivo('');
+    setPersonalEncontrado(null);
+    setArmaEncontrada(null);
+    resetNFCData();
+  }
+
+  async function handleRegistrarMovimiento(targetTipo: TipoRegistro) {
+    setRegistroMensaje(null);
+
+    if (!personalEncontrado) {
+      setRegistroMensaje({
+        mensaje: 'Primero busque y seleccione un personal válido.',
+        exito: false,
+      });
+      return;
     }
-  }, [nfcData, isScanning]);
 
-  // RENDERIZADO DEL COMPONENTE
+    if (!serial.trim()) {
+      setRegistroMensaje({
+        mensaje: 'Debe indicar un serial o leer una etiqueta NFC.',
+        exito: false,
+      });
+      return;
+    }
+
+    const arma = armaEncontrada && armaEncontrada.SERIAL_ARMA === serial.trim()
+      ? armaEncontrada
+      : await buscarArmaPorIdentificador(serial.trim());
+
+    if (!arma) {
+      return;
+    }
+
+    if (!motivo.trim()) {
+      setRegistroMensaje({
+        mensaje: 'Ingrese el motivo del movimiento.',
+        exito: false,
+      });
+      return;
+    }
+
+    if (targetTipo === 'salida' && arma.ESTADO_DISPONIBILIDAD !== 'DISPONIBLE') {
+      setRegistroMensaje({
+        mensaje: 'El arma no está disponible para registrar una salida.',
+        exito: false,
+      });
+      return;
+    }
+
+    if (targetTipo === 'entrada' && arma.ESTADO_DISPONIBILIDAD !== 'ASIGNADO') {
+      setRegistroMensaje({
+        mensaje: 'El arma debe estar asignada para registrar una entrada.',
+        exito: false,
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const movimiento = await movimientosService.registrar({
+        TIPO_MOVIMIENTO: targetTipo.toUpperCase() as 'ENTRADA' | 'SALIDA',
+        ID_CEDULA_PERSONAL: personalEncontrado.CEDULA,
+        SERIAL_ARMA: arma.SERIAL_ARMA,
+        CANTIDAD_CARGADORES: Number(cargadores || '0'),
+        CANTIDAD_MUNICION: Number(municiones || '0'),
+        MOTIVO: motivo.trim(),
+        UID_LECTOR_NFC: nfcData?.serialNumber || nfcData?.id || 'WEB_APP',
+      });
+
+      setRegistroMensaje({
+        mensaje: `${targetTipo === 'entrada' ? 'Entrada' : 'Salida'} registrada correctamente para ${movimiento.NOMBRE_COMPLETO || `${personalEncontrado.NOMBRE} ${personalEncontrado.APELLIDO}`}.`,
+        exito: true,
+      });
+
+      clearFormAfterSubmit();
+      await loadRecentMovements();
+    } catch (saveError) {
+      setRegistroMensaje({
+        mensaje: extractErrorMessage(saveError, 'No se pudo registrar el movimiento.'),
+        exito: false,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-        <Shield className="w-6 h-6 text-blue-600" />
+      <h1 className="flex items-center gap-2 text-2xl font-bold text-gray-800">
+        <Shield className="h-6 w-6 text-blue-600" />
         Registro de Entrada/Salida de Armas
       </h1>
 
-      {/*       SELECTOR DE MODO LECTURA */}
-      <div className="flex gap-4 p-1 bg-gray-100 rounded-lg w-full max-w-xs">
+      <div className="flex w-full max-w-xs gap-4 rounded-lg bg-gray-100 p-1">
         <button
           onClick={() => setModoLectura('nfc')}
-          className={`
-            flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium
-            transition-all duration-200
-            ${modoLectura === 'nfc'
-              ? 'bg-blue-600 text-white shadow-md'
-              : 'text-gray-600 hover:bg-gray-200'
-            }
-          `}
+          className={`flex-1 rounded-lg px-4 py-2 font-medium transition-all duration-200 ${
+            modoLectura === 'nfc' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-600 hover:bg-gray-200'
+          }`}
         >
-          <Smartphone className="w-4 h-4" />
-          NFC
+          <span className="flex items-center justify-center gap-2">
+            <Smartphone className="h-4 w-4" />
+            NFC
+          </span>
         </button>
         <button
           onClick={() => setModoLectura('manual')}
-          className={`
-            flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium
-            transition-all duration-200
-            ${modoLectura === 'manual'
-              ? 'bg-blue-600 text-white shadow-md'
-              : 'text-gray-600 hover:bg-gray-200'
-            }
-          `}
+          className={`flex-1 rounded-lg px-4 py-2 font-medium transition-all duration-200 ${
+            modoLectura === 'manual' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-600 hover:bg-gray-200'
+          }`}
         >
-          <User className="w-4 h-4" />
-          Manual
+          <span className="flex items-center justify-center gap-2">
+            <User className="h-4 w-4" />
+            Manual
+          </span>
         </button>
       </div>
 
-      {/* MODO NFC - LECTURA DE ETIQUETA */}
       {modoLectura === 'nfc' && (
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-          <h3 className="font-semibold text-gray-700 mb-4">Lectura NFC</h3>
-          
-          {/* Información de NFC */}
+        <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+          <h3 className="mb-4 font-semibold text-gray-700">Lectura NFC</h3>
+
           {!isSupported && (
-            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg mb-4">
+            <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-4">
               <div className="flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-yellow-600" />
                 <div>
                   <p className="font-semibold text-yellow-800">NFC no disponible</p>
                   <p className="text-sm text-yellow-700">
-                    Para usar NFC necesitas:
-                    <br />
-                    • Chrome en Android (versión 89+)
-                    <br />
-                    • NFC activado en el dispositivo
-                    <br />
-                    • Acceso vía HTTPS o localhost
+                    Para usar Web NFC necesitas Chrome en Android, NFC activado y acceso por HTTPS o `localhost`.
                   </p>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Botón NFC */}
           <div className="flex flex-col gap-3">
             <button
-              onClick={handleNFCScan}
-              disabled={isScanning || !isSupported}
-              className={`
-                flex items-center justify-center gap-3 px-6 py-4 rounded-xl font-semibold
-                transition-all duration-200 w-full
-                ${isScanning
-                  ? 'bg-yellow-500 text-white'
-                  : 'bg-blue-600 hover:bg-blue-700 text-white'
-                }
-                ${!isSupported && 'opacity-50 cursor-not-allowed'}
-                hover:scale-[1.02] active:scale-[0.98]
-              `}
+              onClick={() => void handleNFCScan()}
+              disabled={!isSupported}
+              className={`w-full rounded-xl px-6 py-4 font-semibold transition-all duration-200 ${
+                isScanning ? 'bg-yellow-500 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'
+              } ${!isSupported ? 'cursor-not-allowed opacity-50' : 'hover:scale-[1.02] active:scale-[0.98]'}`}
             >
-              {isScanning ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Escaneando... acerca el armamento</span>
-                </>
-              ) : (
-                <>
-                  <Radio className="w-5 h-5" />
-                  <span>Leer NFC</span>
-                </>
-              )}
+              <span className="flex items-center justify-center gap-3">
+                {isScanning ? <Loader2 className="h-5 w-5 animate-spin" /> : <Radio className="h-5 w-5" />}
+                {isScanning ? 'Escaneando... acerca el armamento' : 'Leer NFC'}
+              </span>
             </button>
 
-            {/* Progreso NFC */}
             {nfcProgress && (
-              <div className={`p-3 rounded-lg flex items-center gap-3 text-sm
-                ${isScanning ? 'bg-blue-50 text-blue-700' : ''}
-                ${nfcError ? 'bg-red-50 text-red-700' : ''}
-                ${nfcData && !nfcError ? 'bg-green-50 text-green-700' : ''}
-              `}>
-                {isScanning && <Loader2 className="w-4 h-4 animate-spin" />}
-                {nfcError && <XCircle className="w-4 h-4" />}
-                {nfcData && !nfcError && <CheckCircle className="w-4 h-4" />}
+              <div
+                className={`flex items-center gap-3 rounded-lg p-3 text-sm ${
+                  nfcError ? 'bg-red-50 text-red-700' : nfcData ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'
+                }`}
+              >
+                {isScanning && <Loader2 className="h-4 w-4 animate-spin" />}
+                {nfcError && <XCircle className="h-4 w-4" />}
+                {nfcData && !nfcError && <CheckCircle className="h-4 w-4" />}
                 <span>{nfcProgress}</span>
               </div>
             )}
 
-            {/* Error NFC */}
             {nfcError && (
-              <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4">
                 <div className="flex items-start gap-3">
-                  <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                  <XCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-500" />
                   <div>
                     <p className="font-semibold text-red-700">Error NFC</p>
                     <p className="text-sm text-red-600">{nfcError}</p>
@@ -318,16 +387,15 @@ export function RegistroEntradaSalidaModule() {
             )}
           </div>
 
-          {/* Datos NFC leídos */}
           {nfcData && (
-            <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle className="w-5 h-5 text-green-600" />
-                <span className="font-semibold text-green-800">Leído</span>
+            <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-4">
+              <div className="mb-2 flex items-center gap-2">
+                <CheckCircle className="h-5 w-5 text-green-600" />
+                <span className="font-semibold text-green-800">Etiqueta leída</span>
               </div>
-              <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="grid grid-cols-1 gap-2 text-sm md:grid-cols-2">
                 <div>
-                  <span className="font-medium text-gray-600">ID:</span>
+                  <span className="font-medium text-gray-600">Identificador:</span>
                   <span className="ml-2 font-mono">{nfcData.id}</span>
                 </div>
                 <div>
@@ -340,13 +408,11 @@ export function RegistroEntradaSalidaModule() {
         </div>
       )}
 
-      {/* FORMULARIO DE REGISTRO (Común para ambos modos) */}
-      <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-        <h3 className="font-semibold text-gray-700 mb-4">Datos del Registro</h3>
+      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <h3 className="mb-4 font-semibold text-gray-700">Datos del Registro</h3>
 
-        {/* Tipo de registro */}
         <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Movimiento</label>
+          <label className="mb-2 block text-sm font-medium text-gray-700">Tipo de Movimiento</label>
           <div className="flex gap-4">
             <label className="flex items-center gap-2">
               <input
@@ -354,7 +420,7 @@ export function RegistroEntradaSalidaModule() {
                 name="tipo"
                 value="entrada"
                 checked={tipoRegistro === 'entrada'}
-                onChange={(e) => setTipoRegistro(e.target.value as 'entrada' | 'salida')}
+                onChange={(event) => setTipoRegistro(event.target.value as TipoRegistro)}
                 className="accent-[#0066ff]"
               />
               <span className="text-sm">Entrada</span>
@@ -365,7 +431,7 @@ export function RegistroEntradaSalidaModule() {
                 name="tipo"
                 value="salida"
                 checked={tipoRegistro === 'salida'}
-                onChange={(e) => setTipoRegistro(e.target.value as 'entrada' | 'salida')}
+                onChange={(event) => setTipoRegistro(event.target.value as TipoRegistro)}
                 className="accent-[#0066ff]"
               />
               <span className="text-sm">Salida</span>
@@ -373,168 +439,201 @@ export function RegistroEntradaSalidaModule() {
           </div>
         </div>
 
-        {/* Búsqueda por cédula (modo manual) */}
-        {modoLectura === 'manual' && (
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">Cédula de Identidad</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="Ingrese cédula..."
-                value={cedula}
-                onChange={(e) => setCedula(e.target.value)}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0066ff]"
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter') {
-                    buscarPersonal();
-                  }
-                }}
-              />
-              <button
-                onClick={buscarPersonal}
-                className="px-4 py-2 bg-[#0066ff] text-white rounded-lg hover:bg-[#0052cc] transition-colors flex items-center gap-2"
-              >
-                <Search size={20} />
-                Buscar
-              </button>
-            </div>
+        <div className="mb-4">
+          <label className="mb-2 block text-sm font-medium text-gray-700">Cédula de Identidad</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="Ingrese cédula..."
+              value={cedula}
+              onChange={(event) => setCedula(event.target.value)}
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#0066ff]"
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  void buscarPersonal();
+                }
+              }}
+            />
+            <button
+              onClick={() => void buscarPersonal()}
+              disabled={isLoadingPersonal}
+              className="flex items-center gap-2 rounded-lg bg-[#0066ff] px-4 py-2 text-white hover:bg-[#0052cc] transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isLoadingPersonal ? <Loader2 size={20} className="animate-spin" /> : <Search size={20} />}
+              Buscar
+            </button>
           </div>
-        )}
+        </div>
 
-        {/* Información del personal */}
         {personalEncontrado && (
-          <div className="bg-gray-50 p-4 rounded-lg mb-4">
-            <h4 className="font-semibold text-gray-700 mb-2">Información del Personal</h4>
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              <p><strong>Nombre:</strong> {personalEncontrado.nombre} {personalEncontrado.apellido}</p>
-              <p><strong>Jerarquía:</strong> {personalEncontrado.jerarquia}</p>
-              <p><strong>Cédula:</strong> {personalEncontrado.cedula}</p>
-              <p><strong>Compañía:</strong> {personalEncontrado.compania}</p>
+          <div className="mb-4 rounded-lg bg-gray-50 p-4">
+            <h4 className="mb-2 font-semibold text-gray-700">Información del Personal</h4>
+            <div className="grid grid-cols-1 gap-2 text-sm md:grid-cols-2">
+              <p>
+                <strong>Nombre:</strong> {personalEncontrado.NOMBRE} {personalEncontrado.APELLIDO}
+              </p>
+              <p>
+                <strong>Jerarquía:</strong> {personalEncontrado.JERARQUIA_NOMBRE}
+              </p>
+              <p>
+                <strong>Cédula:</strong> {personalEncontrado.CEDULA}
+              </p>
+              <p>
+                <strong>Compañía:</strong> {personalEncontrado.COMPANIA_NOMBRE}
+              </p>
             </div>
           </div>
         )}
 
-        {/* Datos del arma */}
         {personalEncontrado && (
           <>
-            <div className="grid grid-cols-3 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Serial del Arma</label>
-                <input
-                  type="text"
-                  placeholder="Número de serial"
-                  value={serial}
-                  onChange={(e) => setSerial(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0066ff]"
-                />
+            <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="md:col-span-2">
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  {modoLectura === 'manual' ? 'Serial o TAG del Arma' : 'Serial o TAG leído'}
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Número de serial o TAG NFC"
+                    value={serial}
+                    onChange={(event) => {
+                      setSerial(event.target.value);
+                      setArmaEncontrada(null);
+                    }}
+                    className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#0066ff]"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        void buscarArmaPorIdentificador(serial);
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={() => void buscarArmaPorIdentificador(serial)}
+                    disabled={isLoadingArma}
+                    className="rounded-lg bg-gray-200 px-4 py-2 text-gray-700 hover:bg-gray-300 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isLoadingArma ? 'Buscando...' : 'Buscar arma'}
+                  </button>
+                </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Cant. Cargadores</label>
+                <label className="mb-2 block text-sm font-medium text-gray-700">Cant. Cargadores</label>
                 <input
                   type="number"
                   placeholder="0"
                   value={cargadores}
-                  onChange={(e) => setCargadores(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0066ff]"
+                  onChange={(event) => setCargadores(event.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#0066ff]"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Cant. Municiones</label>
+                <label className="mb-2 block text-sm font-medium text-gray-700">Cant. Municiones</label>
                 <input
                   type="number"
                   placeholder="0"
                   value={municiones}
-                  onChange={(e) => setMuniciones(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0066ff]"
+                  onChange={(event) => setMuniciones(event.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#0066ff]"
                 />
               </div>
             </div>
+
+            {armaEncontrada && (
+              <div className="mb-4 rounded-lg bg-gray-50 p-4">
+                <h4 className="mb-2 font-semibold text-gray-700">Información del Arma</h4>
+                <div className="grid grid-cols-1 gap-2 text-sm md:grid-cols-2">
+                  <p>
+                    <strong>Modelo:</strong> {armaEncontrada.MODELO}
+                  </p>
+                  <p>
+                    <strong>Tipo:</strong> {armaEncontrada.TIPO}
+                  </p>
+                  <p>
+                    <strong>Serial:</strong> {armaEncontrada.SERIAL_ARMA}
+                  </p>
+                  <p>
+                    <strong>TAG NFC:</strong> {armaEncontrada.TAG_NFC}
+                  </p>
+                  <p>
+                    <strong>Calibre:</strong> {armaEncontrada.CALIBRE}
+                  </p>
+                  <p>
+                    <strong>Estado actual:</strong> {armaEncontrada.ESTADO_DISPONIBILIDAD}
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Motivo</label>
+              <label className="mb-2 block text-sm font-medium text-gray-700">Motivo</label>
               <input
                 type="text"
-                placeholder="Folio de guardia, folio de parque, etc."
+                placeholder="Folio de guardia, entrega de parque, etc."
                 value={motivo}
-                onChange={(e) => setMotivo(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0066ff]"
+                onChange={(event) => setMotivo(event.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#0066ff]"
               />
             </div>
 
-            {/* Botones de registro */}
-            <div className="flex gap-3 mt-4">
+            <div className="mt-4 flex gap-3">
               <button
-                onClick={() => handleManualRegistro('entrada')}
-                className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-colors flex items-center justify-center gap-2"
-                disabled={!serial || !cargadores || !municiones || !motivo}
+                onClick={() => void handleRegistrarMovimiento('entrada')}
+                disabled={isSubmitting}
+                className="flex-1 rounded-lg bg-green-600 px-6 py-3 font-semibold text-white transition-colors hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <CheckCircle size={20} />
-                Registrar Entrada
+                <span className="flex items-center justify-center gap-2">
+                  {isSubmitting && tipoRegistro === 'entrada' ? <Loader2 size={20} className="animate-spin" /> : <CheckCircle size={20} />}
+                  Registrar Entrada
+                </span>
               </button>
               <button
-                onClick={() => handleManualRegistro('salida')}
-                className="flex-1 px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition-colors flex items-center justify-center gap-2"
-                disabled={!serial || !cargadores || !municiones || !motivo}
+                onClick={() => void handleRegistrarMovimiento('salida')}
+                disabled={isSubmitting}
+                className="flex-1 rounded-lg bg-red-600 px-6 py-3 font-semibold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <XCircle size={20} />
-                Registrar Salida
+                <span className="flex items-center justify-center gap-2">
+                  {isSubmitting && tipoRegistro === 'salida' ? <Loader2 size={20} className="animate-spin" /> : <XCircle size={20} />}
+                  Registrar Salida
+                </span>
               </button>
             </div>
           </>
         )}
 
-        {/* Mensaje de registro */}
         {registroMensaje && (
-          <div className={`mt-4 p-4 rounded-lg border
-            ${registroMensaje.exito
-              ? 'bg-green-50 border-green-300'
-              : 'bg-red-50 border-red-300'
-            }
-          `}>
+          <div
+            className={`mt-4 rounded-lg border p-4 ${
+              registroMensaje.exito ? 'border-green-300 bg-green-50' : 'border-red-300 bg-red-50'
+            }`}
+          >
             <div className="flex items-start gap-3">
               {registroMensaje.exito ? (
-                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                <CheckCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-green-600" />
               ) : (
-                <XCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <XCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-600" />
               )}
-              <div className="flex-1">
-                <p className={`font-medium ${registroMensaje.exito ? 'text-green-800' : 'text-red-800'}`}>
-                  {registroMensaje.mensaje}
-                </p>
-                {registroMensaje.empleado && (
-                  <div className="mt-2 text-sm text-gray-600">
-                    <p>👤 {registroMensaje.empleado.nombre} {registroMensaje.empleado.apellido}</p>
-                    <p>📋 {registroMensaje.empleado.jerarquia} - {registroMensaje.empleado.compania}</p>
-                  </div>
-                )}
-              </div>
+              <p className={registroMensaje.exito ? 'font-medium text-green-800' : 'font-medium text-red-800'}>
+                {registroMensaje.mensaje}
+              </p>
             </div>
           </div>
         )}
       </div>
 
-      {/* TABLA DE REGISTROS RECIENTE */}
-      <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-gray-700 flex items-center gap-2">
-            <Clock className="w-4 h-4" />
+      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="flex items-center gap-2 font-semibold text-gray-700">
+            <Clock className="h-4 w-4" />
             Registros Recientes
           </h3>
-          {registros.length > 0 && (
-            <button
-              onClick={() => setRegistros([])}
-              className="text-sm text-red-600 hover:text-red-800 flex items-center gap-1"
-            >
-              <RefreshCw className="w-3 h-3" />
-              Limpiar
-            </button>
-          )}
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">
             <thead className="bg-[#0066ff] text-white">
               <tr>
-                <th className="px-4 py-3 text-left text-sm">G-F-M</th>
+                <th className="px-4 py-3 text-left text-sm">Fecha y Hora</th>
                 <th className="px-4 py-3 text-left text-sm">Tipo</th>
                 <th className="px-4 py-3 text-left text-sm">Cédula</th>
                 <th className="px-4 py-3 text-left text-sm">Nombre</th>
@@ -543,47 +642,77 @@ export function RegistroEntradaSalidaModule() {
                 <th className="px-4 py-3 text-left text-sm">Carg.</th>
                 <th className="px-4 py-3 text-left text-sm">Munic.</th>
                 <th className="px-4 py-3 text-left text-sm">Motivo</th>
-                <th className="px-4 py-3 text-left text-sm">NFC</th>
+                <th className="px-4 py-3 text-left text-sm">UID Lector</th>
               </tr>
             </thead>
             <tbody>
-              {registros.map((registro, index) => (
-                <tr key={registro.id} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
-                  <td className="px-4 py-3 border-t border-gray-200 text-sm">{registro.fechaHora}</td>
-                  <td className="px-4 py-3 border-t border-gray-200 text-sm">
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${
-                      registro.tipo === 'entrada'
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-red-100 text-red-700'
-                    }`}>
-                      {registro.tipo === 'entrada' ? 'Entrada' : 'Salida'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 border-t border-gray-200 text-sm">{registro.cedula}</td>
-                  <td className="px-4 py-3 border-t border-gray-200 text-sm">{registro.nombreCompleto}</td>
-                  <td className="px-4 py-3 border-t border-gray-200 text-sm">{registro.jerarquia}</td>
-                  <td className="px-4 py-3 border-t border-gray-200 text-sm font-mono">{registro.serial}</td>
-                  <td className="px-4 py-3 border-t border-gray-200 text-sm text-center">{registro.cargadores}</td>
-                  <td className="px-4 py-3 border-t border-gray-200 text-sm text-center">{registro.municiones}</td>
-                  <td className="px-4 py-3 border-t border-gray-200 text-sm">{registro.motivo}</td>
-                  <td className="px-4 py-3 border-t border-gray-200 text-center">
-                    {registro.nfcConfirmado ? (
-                      <CheckCircle size={18} className="text-green-500 inline" />
-                    ) : (
-                      <XCircle size={18} className="text-red-500 inline" />
-                    )}
+              {isLoadingRegistros && (
+                <tr className="bg-white">
+                  <td colSpan={10} className="border-t border-gray-200 px-4 py-8 text-center text-gray-500">
+                    Cargando registros...
                   </td>
                 </tr>
-              ))}
+              )}
+              {!isLoadingRegistros && registros.length === 0 && (
+                <tr className="bg-white">
+                  <td colSpan={10} className="border-t border-gray-200 px-4 py-8 text-center text-gray-500">
+                    No hay registros todavía
+                  </td>
+                </tr>
+              )}
+              {!isLoadingRegistros &&
+                registros.map((registro, index) => (
+                  <tr key={registro.ID_MOVIMIENTO} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                    <td className="border-t border-gray-200 px-4 py-3 text-sm">{formatDateTime(registro.GRUPO_FECHA_HORA)}</td>
+                    <td className="border-t border-gray-200 px-4 py-3 text-sm">
+                      <span
+                        className={`rounded px-2 py-1 text-xs font-medium ${
+                          registro.TIPO_MOVIMIENTO === 'ENTRADA' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                        }`}
+                      >
+                        {registro.TIPO_MOVIMIENTO}
+                      </span>
+                    </td>
+                    <td className="border-t border-gray-200 px-4 py-3 text-sm">{registro.ID_CEDULA_PERSONAL}</td>
+                    <td className="border-t border-gray-200 px-4 py-3 text-sm">{registro.NOMBRE_COMPLETO || '—'}</td>
+                    <td className="border-t border-gray-200 px-4 py-3 text-sm">{registro.JERARQUIA_NOMBRE || '—'}</td>
+                    <td className="border-t border-gray-200 px-4 py-3 text-sm font-mono">{registro.SERIAL_ARMA}</td>
+                    <td className="border-t border-gray-200 px-4 py-3 text-center text-sm">{registro.CANTIDAD_CARGADORES}</td>
+                    <td className="border-t border-gray-200 px-4 py-3 text-center text-sm">{registro.CANTIDAD_MUNICION}</td>
+                    <td className="border-t border-gray-200 px-4 py-3 text-sm">{registro.MOTIVO || '—'}</td>
+                    <td className="border-t border-gray-200 px-4 py-3 text-sm">{registro.UID_LECTOR_NFC || 'WEB_APP'}</td>
+                  </tr>
+                ))}
             </tbody>
           </table>
-          {registros.length === 0 && (
-            <div className="text-center py-8 text-gray-500">
-              No hay registros todavía
-            </div>
-          )}
         </div>
       </div>
     </div>
   );
+}
+
+function formatDateTime(value: string) {
+  if (!value) {
+    return '—';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString();
+}
+
+function buildCedulaCandidates(input: string) {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  if (trimmed.includes('-')) {
+    return [trimmed];
+  }
+
+  return [trimmed, `V-${trimmed}`, `E-${trimmed}`];
 }
