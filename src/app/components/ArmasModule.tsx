@@ -1,17 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, Plus, Eye, ArrowLeft } from 'lucide-react';
+import { armasService, type Arma as DatabaseArma } from '../services/databaseService';
 
-interface Arma {
+interface ArmaView {
   serial: string;
   nombre: string;
   modelo: string;
   tipo: string;
   carga: string;
-  municion: string;
+  municion: string | null;
   calibre: string;
-  disponibles: number;
-  enUso: number;
-  enMantenimiento: number;
+  estado: DatabaseArma['ESTADO_DISPONIBILIDAD'];
 }
 
 interface Cargador {
@@ -25,14 +24,6 @@ interface Cargador {
 
 const generarSerial = () => Math.floor(10000000 + Math.random() * 90000000).toString();
 
-const armasIniciales: Arma[] = [
-  { serial: generarSerial(), nombre: 'Fusil AK-103', modelo: 'AK-103', tipo: 'Fusil de asalto', carga: 'Cargador extraíble (30 cartuchos)', municion: '7,62 mm', calibre: '7,62 x 39 mm', disponibles: 10, enUso: 3, enMantenimiento: 2 },
-  { serial: generarSerial(), nombre: 'Fusil FAL', modelo: 'FAL', tipo: 'Fusil automático liviano', carga: 'Cargador extraíble (20 cartuchos)', municion: '7,62 mm', calibre: '7,62 x 51 mm OTAN', disponibles: 8, enUso: 2, enMantenimiento: 2 },
-  { serial: generarSerial(), nombre: 'Ametralladora MAG', modelo: 'MAG / AFAG', tipo: 'Ametralladora de propósito general', carga: 'Cinta eslabonada (50, 100, 200)', municion: '7,62 mm', calibre: '7,62 x 51 mm OTAN', disponibles: 5, enUso: 2, enMantenimiento: 1 },
-  { serial: generarSerial(), nombre: 'Cañón Carl Gustaf', modelo: 'Carl Gustaf', tipo: 'Cañón sin retroceso', carga: 'Recarga manual', municion: '84 mm', calibre: 'Proyectil de 84 mm', disponibles: 3, enUso: 0, enMantenimiento: 1 },
-  { serial: generarSerial(), nombre: 'Fusil Dragunov', modelo: 'Dragunov (SVD)', tipo: 'Fusil de precisión', carga: 'Cargador (10)', municion: '7,62 mm', calibre: '7,62 x 54 mm R', disponibles: 4, enUso: 1, enMantenimiento: 1 }
-];
-
 const cargadoresIniciales: Cargador[] = [
   { id: '1', tipo: 'Cargador AK-103', calibre: '7,62 x 39 mm', municion: '7,62 mm', disponibles: 50, entregados: 15 },
   { id: '2', tipo: 'Cargador FAL', calibre: '7,62 x 51 mm OTAN', municion: '7,62 mm', disponibles: 40, entregados: 10 },
@@ -40,18 +31,61 @@ const cargadoresIniciales: Cargador[] = [
 ];
 
 export function ArmasModule() {
-  const [armas, setArmas] = useState<Arma[]>(armasIniciales);
+  const [armas, setArmas] = useState<ArmaView[]>([]);
   const [cargadores] = useState<Cargador[]>(cargadoresIniciales);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState('');
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
   const [vistaActual, setVistaActual] = useState<'armas' | 'cargadores'>('armas');
-  const [nuevaArma, setNuevaArma] = useState<Arma>({
-    serial: '', nombre: '', modelo: '', tipo: '', carga: '', municion: '', calibre: '', disponibles: 0, enUso: 0, enMantenimiento: 0
+  const [nuevaArma, setNuevaArma] = useState<ArmaView>({
+    serial: '', nombre: '', modelo: '', tipo: '', carga: '', municion: null, calibre: '', estado: 'DISPONIBLE'
   });
 
   const [vista, setVista] = useState<'lista' | 'menuParques' | 'detalle'>('lista');
-  const [armaSeleccionada, setArmaSeleccionada] = useState<Arma | null>(null);
+  const [armaSeleccionada, setArmaSeleccionada] = useState<ArmaView | null>(null);
   const [parqueSeleccionado, setParqueSeleccionado] = useState<number | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadArmas = async () => {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const response = await armasService.getAll();
+
+        if (!isMounted) {
+          return;
+        }
+
+        setArmas(response.map(mapArmaToView));
+      } catch (loadError: any) {
+        if (!isMounted) {
+          return;
+        }
+
+        const backendMessage =
+          loadError?.response?.data?.error ||
+          loadError?.message ||
+          'No se pudieron cargar las armas.';
+
+        setError(`No se pudieron cargar las armas. ${backendMessage}`);
+        setArmas([]);
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void loadArmas();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const armasFiltradas = armas.filter(arma =>
     arma.modelo.toLowerCase().includes(busqueda.toLowerCase())
@@ -66,7 +100,7 @@ export function ArmasModule() {
 
   const resetFormulario = () => {
     setNuevaArma({
-      serial: '', nombre: '', modelo: '', tipo: '', carga: '', municion: '', calibre: '', disponibles: 0, enUso: 0, enMantenimiento: 0
+      serial: '', nombre: '', modelo: '', tipo: '', carga: '', municion: null, calibre: '', estado: 'DISPONIBLE'
     });
     setMostrarFormulario(false);
   };
@@ -113,13 +147,34 @@ export function ArmasModule() {
                     </tr>
                   </thead>
                   <tbody>
-                    {armasFiltradas.map((arma, index) => (
+                    {isLoading && (
+                      <tr className="bg-white">
+                        <td colSpan={6} className="px-4 py-8 border-t text-center text-gray-500">
+                          Cargando armas...
+                        </td>
+                      </tr>
+                    )}
+                    {!isLoading && error && (
+                      <tr className="bg-white">
+                        <td colSpan={6} className="px-4 py-8 border-t text-center text-red-600">
+                          {error}
+                        </td>
+                      </tr>
+                    )}
+                    {!isLoading && !error && armasFiltradas.length === 0 && (
+                      <tr className="bg-white">
+                        <td colSpan={6} className="px-4 py-8 border-t text-center text-gray-500">
+                          No hay armas registradas
+                        </td>
+                      </tr>
+                    )}
+                    {!isLoading && !error && armasFiltradas.map((arma, index) => (
                       <tr key={arma.serial} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
                         <td className="px-4 py-3 border-t">{arma.modelo}</td>
                         <td className="px-4 py-3 border-t">{arma.tipo}</td>
                         <td className="px-4 py-3 border-t">{arma.carga}</td>
                         <td className="px-4 py-3 border-t">{arma.calibre}</td>
-                        <td className="px-4 py-3 border-t">{arma.municion}</td>
+                        <td className="px-4 py-3 border-t">{arma.municion ?? '—'}</td>
                         <td className="px-4 py-3 border-t text-right">
                           <button 
                             onClick={() => {
@@ -201,7 +256,7 @@ export function ArmasModule() {
                       <td className="p-3">{armaSeleccionada.tipo}</td>
                       <td className="p-3">{armaSeleccionada.carga}</td>
                       <td className="p-3">{armaSeleccionada.calibre}</td>
-                      <td className="p-3">{armaSeleccionada.municion}</td>
+                      <td className="p-3">{armaSeleccionada.municion ?? '—'}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -254,8 +309,8 @@ export function ArmasModule() {
                   <input 
                     type="number" 
                     placeholder="Disponibles" 
-                    value={nuevaArma.disponibles} 
-                    onChange={(e) => setNuevaArma({...nuevaArma, disponibles: parseInt(e.target.value) || 0})}
+                    value={nuevaArma.carga} 
+                    onChange={(e) => setNuevaArma({...nuevaArma, carga: e.target.value})}
                     className="w-full p-2 border rounded"
                   />
                 </div>
@@ -307,4 +362,17 @@ export function ArmasModule() {
       )}
     </div>
   );
+}
+
+function mapArmaToView(arma: DatabaseArma): ArmaView {
+  return {
+    serial: arma.SERIAL_ARMA,
+    nombre: arma.MODELO,
+    modelo: arma.MODELO,
+    tipo: arma.TIPO,
+    carga: `${arma.CAPACIDAD_CARGA} cartuchos`,
+    municion: null,
+    calibre: arma.CALIBRE,
+    estado: arma.ESTADO_DISPONIBILIDAD,
+  };
 }
