@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search } from 'lucide-react';
+import { ChevronDown, ChevronUp, Search } from 'lucide-react';
 import {
   extractErrorMessage,
   folioRevistasService,
@@ -7,13 +7,14 @@ import {
   type FolioRevista,
   type Movimiento,
 } from '../services/databaseService';
+import { formatCedula } from '../utils/cedula';
 
 type VistaHistorial = 'movimientos' | 'folios';
-type BusquedaTipo = 'fecha' | 'personal';
+
+const ITEMS_PER_PAGE = 6;
 
 export function RegistroModule() {
   const [vista, setVista] = useState<VistaHistorial>('movimientos');
-  const [busquedaTipo, setBusquedaTipo] = useState<BusquedaTipo>('fecha');
   const [busqueda, setBusqueda] = useState('');
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
   const [folios, setFolios] = useState<FolioRevista[]>([]);
@@ -21,11 +22,25 @@ export function RegistroModule() {
   const [isLoadingFolios, setIsLoadingFolios] = useState(true);
   const [errorMovimientos, setErrorMovimientos] = useState<string | null>(null);
   const [errorFolios, setErrorFolios] = useState<string | null>(null);
+  const [expandedMovimientoId, setExpandedMovimientoId] = useState<number | null>(null);
+  const [expandedFolioId, setExpandedFolioId] = useState<number | null>(null);
+  const [paginaMovimientos, setPaginaMovimientos] = useState(1);
+  const [paginaFolios, setPaginaFolios] = useState(1);
 
   useEffect(() => {
     void loadMovimientos();
     void loadFolios();
   }, []);
+
+  useEffect(() => {
+    if (vista === 'movimientos') {
+      setPaginaMovimientos(1);
+      setExpandedMovimientoId(null);
+    } else {
+      setPaginaFolios(1);
+      setExpandedFolioId(null);
+    }
+  }, [busqueda, vista]);
 
   const movimientosFiltrados = useMemo(() => {
     const valor = busqueda.trim().toLowerCase();
@@ -35,16 +50,17 @@ export function RegistroModule() {
         return true;
       }
 
-      if (busquedaTipo === 'fecha') {
-        return formatDateTime(movimiento.GRUPO_FECHA_HORA).toLowerCase().includes(valor);
-      }
-
       return (
+        formatDateTime(movimiento.GRUPO_FECHA_HORA).toLowerCase().includes(valor) ||
         (movimiento.NOMBRE_COMPLETO || '').toLowerCase().includes(valor) ||
-        movimiento.ID_CEDULA_PERSONAL.toLowerCase().includes(valor)
+        movimiento.ID_CEDULA_PERSONAL.toLowerCase().includes(valor) ||
+        (movimiento.JERARQUIA_NOMBRE || '').toLowerCase().includes(valor) ||
+        (movimiento.COMPANIA_NOMBRE || '').toLowerCase().includes(valor) ||
+        (movimiento.MODELO_ARMA || '').toLowerCase().includes(valor) ||
+        movimiento.SERIAL_ARMA.toLowerCase().includes(valor)
       );
     });
-  }, [busqueda, busquedaTipo, movimientos]);
+  }, [busqueda, movimientos]);
 
   const foliosFiltrados = useMemo(() => {
     const valor = busqueda.trim().toLowerCase();
@@ -54,18 +70,33 @@ export function RegistroModule() {
         return true;
       }
 
-      if (busquedaTipo === 'fecha') {
-        return formatDateTime(folio.GRUPO_FECHA_HORA).toLowerCase().includes(valor);
-      }
-
       return (
+        formatDateTime(folio.GRUPO_FECHA_HORA).toLowerCase().includes(valor) ||
         (folio.NOMBRE_PERSONAL || '').toLowerCase().includes(valor) ||
         (folio.NOMBRE_INSPECTOR || '').toLowerCase().includes(valor) ||
         folio.ID_CEDULA_PERSONAL.toLowerCase().includes(valor) ||
-        folio.CEDULA_INSPECTOR.toLowerCase().includes(valor)
+        folio.CEDULA_INSPECTOR.toLowerCase().includes(valor) ||
+        folio.PUESTO_SERVICIO.toLowerCase().includes(valor) ||
+        folio.REVISTA_GRUPO.toLowerCase().includes(valor) ||
+        (folio.OBSERVACION || '').toLowerCase().includes(valor)
       );
     });
-  }, [busqueda, busquedaTipo, folios]);
+  }, [busqueda, folios]);
+
+  const totalMovimientoPages = Math.max(1, Math.ceil(movimientosFiltrados.length / ITEMS_PER_PAGE));
+  const totalFolioPages = Math.max(1, Math.ceil(foliosFiltrados.length / ITEMS_PER_PAGE));
+  const currentMovimientoPage = Math.min(paginaMovimientos, totalMovimientoPages);
+  const currentFolioPage = Math.min(paginaFolios, totalFolioPages);
+
+  const movimientosPaginados = useMemo(() => {
+    const startIndex = (currentMovimientoPage - 1) * ITEMS_PER_PAGE;
+    return movimientosFiltrados.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  }, [currentMovimientoPage, movimientosFiltrados]);
+
+  const foliosPaginados = useMemo(() => {
+    const startIndex = (currentFolioPage - 1) * ITEMS_PER_PAGE;
+    return foliosFiltrados.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  }, [currentFolioPage, foliosFiltrados]);
 
   async function loadMovimientos() {
     setIsLoadingMovimientos(true);
@@ -99,180 +130,251 @@ export function RegistroModule() {
 
   return (
     <div>
-      <h1 className="mb-6">Historial</h1>
+      <h1 className="mb-6 text-center">Historial</h1>
 
-      <div className="mb-6 flex gap-2">
-        <button
-          onClick={() => setVista('movimientos')}
-          className={`rounded-lg px-6 py-3 ${vista === 'movimientos' ? 'bg-[#0066ff] text-white' : 'bg-gray-200 text-gray-700'}`}
-        >
-          Movimientos
-        </button>
-        <button
-          onClick={() => setVista('folios')}
-          className={`rounded-lg px-6 py-3 ${vista === 'folios' ? 'bg-[#0066ff] text-white' : 'bg-gray-200 text-gray-700'}`}
-        >
-          Folios de Revista
-        </button>
-      </div>
+      <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap justify-center gap-3">
+            <button
+              onClick={() => setVista('movimientos')}
+              className={`min-w-[180px] rounded-xl px-6 py-3 text-center font-medium transition-colors ${
+                vista === 'movimientos'
+                  ? 'bg-[#0066ff] text-white'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700'
+              }`}
+            >
+              Movimientos
+            </button>
+            <button
+              onClick={() => setVista('folios')}
+              className={`min-w-[180px] rounded-xl px-6 py-3 text-center font-medium transition-colors ${
+                vista === 'folios'
+                  ? 'bg-[#0066ff] text-white'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700'
+              }`}
+            >
+              Folios de Revista
+            </button>
+          </div>
 
-      <div className="mb-6 flex gap-4">
-        <div className="flex gap-2">
-          <button
-            onClick={() => setBusquedaTipo('fecha')}
-            className={`rounded-lg px-4 py-2 transition-colors ${
-              busquedaTipo === 'fecha' ? 'bg-[#0066ff] text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
-          >
-            Por Fecha
-          </button>
-          <button
-            onClick={() => setBusquedaTipo('personal')}
-            className={`rounded-lg px-4 py-2 transition-colors ${
-              busquedaTipo === 'personal' ? 'bg-[#0066ff] text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
-          >
-            Por Personal
-          </button>
-        </div>
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-          <input
-            type="text"
-            placeholder={busquedaTipo === 'fecha' ? 'Buscar por fecha...' : 'Buscar por personal o cédula...'}
-            value={busqueda}
-            onChange={(event) => setBusqueda(event.target.value)}
-            className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-[#0066ff]"
-          />
+          <div>
+            <div className="relative min-w-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-slate-500" size={20} />
+              <input
+                type="text"
+                placeholder="Buscar por fecha, personal, cedula, serial, puesto o motivo..."
+                value={busqueda}
+                onChange={(event) => setBusqueda(event.target.value)}
+                className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-[#0066ff] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+              />
+            </div>
+          </div>
         </div>
       </div>
 
       {vista === 'movimientos' && (
-        <div className="overflow-x-auto">
+        <div className="space-y-4">
           {errorMovimientos && (
-            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-700/40 dark:bg-red-900/20 dark:text-red-300">
               {errorMovimientos}
             </div>
           )}
 
-          <table className="w-full border-collapse overflow-hidden rounded-lg bg-white text-sm shadow-sm">
-            <thead className="bg-[#0066ff] text-white">
-              <tr>
-                <th className="px-3 py-3 text-left">ID</th>
-                <th className="px-3 py-3 text-left">Fecha</th>
-                <th className="px-3 py-3 text-left">Tipo</th>
-                <th className="px-3 py-3 text-left">Personal</th>
-                <th className="px-3 py-3 text-left">Cédula</th>
-                <th className="px-3 py-3 text-left">Jerarquía</th>
-                <th className="px-3 py-3 text-left">Compañía</th>
-                <th className="px-3 py-3 text-left">Arma</th>
-                <th className="px-3 py-3 text-left">Serial</th>
-                <th className="px-3 py-3 text-left">Carg.</th>
-                <th className="px-3 py-3 text-left">Munic.</th>
-                <th className="px-3 py-3 text-left">Motivo</th>
-                <th className="px-3 py-3 text-left">UID</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoadingMovimientos && (
-                <tr className="bg-white">
-                  <td colSpan={13} className="px-3 py-8 text-center text-gray-500">
-                    Cargando movimientos...
-                  </td>
-                </tr>
-              )}
-              {!isLoadingMovimientos && movimientosFiltrados.length === 0 && (
-                <tr className="bg-white">
-                  <td colSpan={13} className="px-3 py-8 text-center text-gray-500">
-                    No hay movimientos registrados
-                  </td>
-                </tr>
-              )}
-              {!isLoadingMovimientos &&
-                movimientosFiltrados.map((movimiento, index) => (
-                  <tr key={movimiento.ID_MOVIMIENTO} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
-                    <td className="border-t border-gray-200 px-3 py-3">{movimiento.ID_MOVIMIENTO}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{formatDateTime(movimiento.GRUPO_FECHA_HORA)}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{movimiento.TIPO_MOVIMIENTO}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{movimiento.NOMBRE_COMPLETO || '—'}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{movimiento.ID_CEDULA_PERSONAL}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{movimiento.JERARQUIA_NOMBRE || '—'}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{movimiento.COMPANIA_NOMBRE || '—'}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{movimiento.MODELO_ARMA || '—'}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{movimiento.SERIAL_ARMA}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{movimiento.CANTIDAD_CARGADORES}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{movimiento.CANTIDAD_MUNICION}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{movimiento.MOTIVO || '—'}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{movimiento.UID_LECTOR_NFC || 'WEB_APP'}</td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
+          {isLoadingMovimientos && (
+            <div className="rounded-2xl border border-gray-200 bg-white px-4 py-10 text-center text-gray-500 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+              Cargando movimientos...
+            </div>
+          )}
+
+          {!isLoadingMovimientos && movimientosFiltrados.length === 0 && (
+            <div className="rounded-2xl border border-gray-200 bg-white px-4 py-10 text-center text-gray-500 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+              No hay movimientos registrados.
+            </div>
+          )}
+
+          {!isLoadingMovimientos &&
+            movimientosPaginados.map((movimiento) => {
+              const isOpen = expandedMovimientoId === movimiento.ID_MOVIMIENTO;
+              return (
+                <div key={movimiento.ID_MOVIMIENTO} className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                  <button
+                    onClick={() =>
+                      setExpandedMovimientoId((current) => (current === movimiento.ID_MOVIMIENTO ? null : movimiento.ID_MOVIMIENTO))
+                    }
+                    className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left transition-colors hover:bg-gray-50 dark:hover:bg-slate-800/60"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-semibold text-gray-800 dark:text-slate-100">{movimiento.NOMBRE_COMPLETO || '-'}</p>
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            movimiento.TIPO_MOVIMIENTO === 'ENTRADA'
+                              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                              : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                          }`}
+                        >
+                          {movimiento.TIPO_MOVIMIENTO}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-slate-300">
+                        <span>{formatDateTime(movimiento.GRUPO_FECHA_HORA)}</span>
+                        <span>{movimiento.SERIAL_ARMA}</span>
+                        <span>{formatCedula(movimiento.ID_CEDULA_PERSONAL)}</span>
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-gray-500 dark:text-slate-300">
+                      {isOpen ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                    </div>
+                  </button>
+
+                  {isOpen && (
+                    <div className="border-t border-gray-200 px-4 py-4 dark:border-slate-700">
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        <InfoItem label="Cedula" value={formatCedula(movimiento.ID_CEDULA_PERSONAL)} />
+                        <InfoItem label="Jerarquia" value={movimiento.JERARQUIA_NOMBRE || '-'} />
+                        <InfoItem label="Compania" value={movimiento.COMPANIA_NOMBRE || '-'} />
+                        <InfoItem label="Arma" value={movimiento.MODELO_ARMA || '-'} />
+                        <InfoItem label="Serial" value={movimiento.SERIAL_ARMA} />
+                        <InfoItem label="Cargadores" value={String(movimiento.CANTIDAD_CARGADORES)} />
+                        <InfoItem label="Municion" value={String(movimiento.CANTIDAD_MUNICION)} />
+                        <InfoItem label="UID" value={movimiento.UID_LECTOR_NFC || 'WEB_APP'} />
+                        <InfoItem label="Motivo" value={movimiento.MOTIVO || '-'} />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+          {!isLoadingMovimientos && movimientosFiltrados.length > 0 && totalMovimientoPages > 1 && (
+            <PaginationControls
+              currentPage={currentMovimientoPage}
+              totalPages={totalMovimientoPages}
+              onPrevious={() => setPaginaMovimientos((current) => Math.max(1, current - 1))}
+              onNext={() => setPaginaMovimientos((current) => Math.min(totalMovimientoPages, current + 1))}
+            />
+          )}
         </div>
       )}
 
       {vista === 'folios' && (
-        <div className="overflow-x-auto">
+        <div className="space-y-4">
           {errorFolios && (
-            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-700/40 dark:bg-red-900/20 dark:text-red-300">
               {errorFolios}
             </div>
           )}
 
-          <table className="w-full border-collapse overflow-hidden rounded-lg bg-white text-sm shadow-sm">
-            <thead className="bg-[#0066ff] text-white">
-              <tr>
-                <th className="px-3 py-3 text-left">ID</th>
-                <th className="px-3 py-3 text-left">Fecha</th>
-                <th className="px-3 py-3 text-left">Personal</th>
-                <th className="px-3 py-3 text-left">Cédula</th>
-                <th className="px-3 py-3 text-left">Puesto</th>
-                <th className="px-3 py-3 text-left">Grupo</th>
-                <th className="px-3 py-3 text-left">Inspector</th>
-                <th className="px-3 py-3 text-left">Cédula Inspector</th>
-                <th className="px-3 py-3 text-left">Observación</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoadingFolios && (
-                <tr className="bg-white">
-                  <td colSpan={9} className="px-3 py-8 text-center text-gray-500">
-                    Cargando folios...
-                  </td>
-                </tr>
-              )}
-              {!isLoadingFolios && foliosFiltrados.length === 0 && (
-                <tr className="bg-white">
-                  <td colSpan={9} className="px-3 py-8 text-center text-gray-500">
-                    No hay folios registrados
-                  </td>
-                </tr>
-              )}
-              {!isLoadingFolios &&
-                foliosFiltrados.map((folio, index) => (
-                  <tr key={folio.ID_FOLIO} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
-                    <td className="border-t border-gray-200 px-3 py-3">{folio.ID_FOLIO}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{formatDateTime(folio.GRUPO_FECHA_HORA)}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{folio.NOMBRE_PERSONAL || '—'}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{folio.ID_CEDULA_PERSONAL}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{folio.PUESTO_SERVICIO}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{folio.REVISTA_GRUPO}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{folio.NOMBRE_INSPECTOR || '—'}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{folio.CEDULA_INSPECTOR}</td>
-                    <td className="border-t border-gray-200 px-3 py-3">{folio.OBSERVACION || '—'}</td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
+          {isLoadingFolios && (
+            <div className="rounded-2xl border border-gray-200 bg-white px-4 py-10 text-center text-gray-500 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+              Cargando folios...
+            </div>
+          )}
+
+          {!isLoadingFolios && foliosFiltrados.length === 0 && (
+            <div className="rounded-2xl border border-gray-200 bg-white px-4 py-10 text-center text-gray-500 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+              No hay folios registrados.
+            </div>
+          )}
+
+          {!isLoadingFolios &&
+            foliosPaginados.map((folio) => {
+              const isOpen = expandedFolioId === folio.ID_FOLIO;
+              return (
+                <div key={folio.ID_FOLIO} className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                  <button
+                    onClick={() => setExpandedFolioId((current) => (current === folio.ID_FOLIO ? null : folio.ID_FOLIO))}
+                    className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left transition-colors hover:bg-gray-50 dark:hover:bg-slate-800/60"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-800 dark:text-slate-100">{folio.NOMBRE_PERSONAL || '-'}</p>
+                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-slate-300">
+                        <span>{formatDateTime(folio.GRUPO_FECHA_HORA)}</span>
+                        <span>{formatCedula(folio.ID_CEDULA_PERSONAL)}</span>
+                        <span>{folio.PUESTO_SERVICIO}</span>
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-gray-500 dark:text-slate-300">
+                      {isOpen ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                    </div>
+                  </button>
+
+                  {isOpen && (
+                    <div className="border-t border-gray-200 px-4 py-4 dark:border-slate-700">
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        <InfoItem label="Cedula" value={formatCedula(folio.ID_CEDULA_PERSONAL)} />
+                        <InfoItem label="Puesto" value={folio.PUESTO_SERVICIO} />
+                        <InfoItem label="Grupo" value={folio.REVISTA_GRUPO} />
+                        <InfoItem label="Inspector" value={folio.NOMBRE_INSPECTOR || '-'} />
+                        <InfoItem label="Cedula inspector" value={formatCedula(folio.CEDULA_INSPECTOR)} />
+                        <InfoItem label="Observacion" value={folio.OBSERVACION || '-'} />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+          {!isLoadingFolios && foliosFiltrados.length > 0 && totalFolioPages > 1 && (
+            <PaginationControls
+              currentPage={currentFolioPage}
+              totalPages={totalFolioPages}
+              onPrevious={() => setPaginaFolios((current) => Math.max(1, current - 1))}
+              onNext={() => setPaginaFolios((current) => Math.min(totalFolioPages, current + 1))}
+            />
+          )}
         </div>
       )}
     </div>
   );
 }
 
+function InfoItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-slate-50 px-4 py-3 dark:bg-slate-800/70">
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-1 text-sm text-slate-800 dark:text-slate-100">{value}</p>
+    </div>
+  );
+}
+
+function PaginationControls({
+  currentPage,
+  totalPages,
+  onPrevious,
+  onNext,
+}: {
+  currentPage: number;
+  totalPages: number;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+      <button
+        onClick={onPrevious}
+        disabled={currentPage === 1}
+        className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
+      >
+        Anterior
+      </button>
+      <span className="text-sm text-gray-600 dark:text-slate-300">
+        Pagina {currentPage} de {totalPages}
+      </span>
+      <button
+        onClick={onNext}
+        disabled={currentPage === totalPages}
+        className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
+      >
+        Siguiente
+      </button>
+    </div>
+  );
+}
+
 function formatDateTime(value: string) {
   if (!value) {
-    return '—';
+    return '-';
   }
 
   const date = new Date(value);

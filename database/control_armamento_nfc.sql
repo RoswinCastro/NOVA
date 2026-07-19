@@ -3,14 +3,13 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 07-07-2026 a las 17:18:08
--- Versión del servidor: 10.4.32-MariaDB
--- Versión de PHP: 8.2.12
+-- Tiempo de generacion: 07-07-2026 a las 17:18:08
+-- Version del servidor: 10.4.32-MariaDB
+-- Version de PHP: 8.2.12
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
 SET time_zone = "+00:00";
-
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
@@ -62,7 +61,52 @@ CREATE TABLE `companias` (
 --
 
 INSERT INTO `companias` (`ID_COMPANIA`, `NOMBRE_COMPANIA`, `NUM_REGIMIENTO`) VALUES
-(1, 'Primera Compañía', 'Regimiento Táctico 1');
+(1, 'Primera Compania', 'Regimiento Tactico 1');
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `cargadores`
+--
+
+CREATE TABLE `cargadores` (
+  `ID_CARGADOR` bigint(20) NOT NULL,
+  `NOMBRE` varchar(80) NOT NULL,
+  `CAPACIDAD` int(11) NOT NULL,
+  `CANTIDAD_DISPONIBLE` int(11) NOT NULL DEFAULT 0,
+  `ESTADO` enum('DISPONIBLE','RESERVA','MANTENIMIENTO') NOT NULL DEFAULT 'DISPONIBLE'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `cargadores`
+--
+
+INSERT INTO `cargadores` (`ID_CARGADOR`, `NOMBRE`, `CAPACIDAD`, `CANTIDAD_DISPONIBLE`, `ESTADO`) VALUES
+(1, 'Cargador AK-103', 30, 12, 'DISPONIBLE');
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `parques`
+--
+
+CREATE TABLE `parques` (
+  `ID_PARQUE` bigint(20) NOT NULL,
+  `NOMBRE` varchar(80) NOT NULL,
+  `DESCRIPCION` varchar(200) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `parque_armas`
+--
+
+CREATE TABLE `parque_armas` (
+  `ID_PARQUE` bigint(20) NOT NULL,
+  `SERIAL_ARMA` varchar(20) NOT NULL,
+  `ASIGNADO_EN` datetime NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -85,7 +129,7 @@ CREATE TABLE `folio_revistas` (
 --
 
 INSERT INTO `folio_revistas` (`ID_FOLIO`, `GRUPO_FECHA_HORA`, `ID_CEDULA_PERSONAL`, `PUESTO_SERVICIO`, `REVISTA_GRUPO`, `CEDULA_INSPECTOR`, `OBSERVACION`) VALUES
-(1, '2026-07-07 11:15:03', 'V-87654321', 'Garita Principal', 'Grupo de Reacción', 'V-12345678', 'Armamento limpio, sin novedades mecánicas.');
+(1, '2026-07-07 11:15:03', 'V-87654321', 'Garita Principal', 'Grupo de Reaccion', 'V-12345678', 'Armamento limpio, sin novedades mecanicas.');
 
 -- --------------------------------------------------------
 
@@ -153,15 +197,16 @@ CREATE TABLE `personal_militar` (
 
 INSERT INTO `personal_militar` (`CEDULA`, `ID_JERARQUIA`, `NOMBRE`, `APELLIDO`, `CONTINGENTE`, `ID_COMPANIA`, `TELEFONO`) VALUES
 ('V-12345678', 2, 'Carlos', 'Mendoza', 'Fijo', 1, '0412-1111111'),
-('V-87654321', 1, 'Luis', 'Gómez', 'Mayo 2026', 1, '0414-2222222');
+('V-87654321', 1, 'Luis', 'Gomez', 'Mayo 2026', 1, '0414-2222222');
 
 --
--- Índices para tablas volcadas
+-- Indices para tablas volcadas
 --
 
 --
 -- Indices de la tabla `armas`
 --
+
 ALTER TABLE `armas`
   ADD PRIMARY KEY (`SERIAL_ARMA`),
   ADD UNIQUE KEY `UQ_TAG_NFC` (`TAG_NFC`),
@@ -170,12 +215,37 @@ ALTER TABLE `armas`
 --
 -- Indices de la tabla `companias`
 --
+
 ALTER TABLE `companias`
   ADD PRIMARY KEY (`ID_COMPANIA`);
 
 --
+-- Indices de la tabla `cargadores`
+--
+
+ALTER TABLE `cargadores`
+  ADD PRIMARY KEY (`ID_CARGADOR`);
+
+--
+-- Indices de la tabla `parques`
+--
+
+ALTER TABLE `parques`
+  ADD PRIMARY KEY (`ID_PARQUE`),
+  ADD UNIQUE KEY `UQ_PARQUES_NOMBRE` (`NOMBRE`);
+
+--
+-- Indices de la tabla `parque_armas`
+--
+
+ALTER TABLE `parque_armas`
+  ADD PRIMARY KEY (`ID_PARQUE`,`SERIAL_ARMA`),
+  ADD KEY `FK_PARQUE_ARMAS_ARMA` (`SERIAL_ARMA`);
+
+--
 -- Indices de la tabla `folio_revistas`
 --
+
 ALTER TABLE `folio_revistas`
   ADD PRIMARY KEY (`ID_FOLIO`),
   ADD KEY `FK_REVISTAS_PERSONAL` (`ID_CEDULA_PERSONAL`),
@@ -184,12 +254,14 @@ ALTER TABLE `folio_revistas`
 --
 -- Indices de la tabla `jerarquias`
 --
+
 ALTER TABLE `jerarquias`
   ADD PRIMARY KEY (`ID_JERARQUIA`);
 
 --
 -- Indices de la tabla `movimientos`
 --
+
 ALTER TABLE `movimientos`
   ADD PRIMARY KEY (`ID_MOVIMIENTO`),
   ADD KEY `FK_MOVIMIENTOS_PERSONAL` (`ID_CEDULA_PERSONAL`),
@@ -199,6 +271,7 @@ ALTER TABLE `movimientos`
 --
 -- Indices de la tabla `personal_militar`
 --
+
 ALTER TABLE `personal_militar`
   ADD PRIMARY KEY (`CEDULA`),
   ADD KEY `FK_PERSONAL_JERARQUIA` (`ID_JERARQUIA`),
@@ -208,27 +281,21 @@ ALTER TABLE `personal_militar`
 -- AUTO_INCREMENT de las tablas volcadas
 --
 
---
--- AUTO_INCREMENT de la tabla `companias`
---
 ALTER TABLE `companias`
   MODIFY `ID_COMPANIA` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
---
--- AUTO_INCREMENT de la tabla `folio_revistas`
---
+ALTER TABLE `cargadores`
+  MODIFY `ID_CARGADOR` bigint(20) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+
+ALTER TABLE `parques`
+  MODIFY `ID_PARQUE` bigint(20) NOT NULL AUTO_INCREMENT;
+
 ALTER TABLE `folio_revistas`
   MODIFY `ID_FOLIO` bigint(20) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
---
--- AUTO_INCREMENT de la tabla `jerarquias`
---
 ALTER TABLE `jerarquias`
   MODIFY `ID_JERARQUIA` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
---
--- AUTO_INCREMENT de la tabla `movimientos`
---
 ALTER TABLE `movimientos`
   MODIFY `ID_MOVIMIENTO` bigint(20) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
@@ -236,26 +303,22 @@ ALTER TABLE `movimientos`
 -- Restricciones para tablas volcadas
 --
 
---
--- Filtros para la tabla `folio_revistas`
---
 ALTER TABLE `folio_revistas`
   ADD CONSTRAINT `FK_REVISTAS_INSPECTOR` FOREIGN KEY (`CEDULA_INSPECTOR`) REFERENCES `personal_militar` (`CEDULA`) ON UPDATE CASCADE,
   ADD CONSTRAINT `FK_REVISTAS_PERSONAL` FOREIGN KEY (`ID_CEDULA_PERSONAL`) REFERENCES `personal_militar` (`CEDULA`) ON UPDATE CASCADE;
 
---
--- Filtros para la tabla `movimientos`
---
 ALTER TABLE `movimientos`
   ADD CONSTRAINT `FK_MOVIMIENTOS_ARMA` FOREIGN KEY (`SERIAL_ARMA`) REFERENCES `armas` (`SERIAL_ARMA`) ON UPDATE CASCADE,
   ADD CONSTRAINT `FK_MOVIMIENTOS_PERSONAL` FOREIGN KEY (`ID_CEDULA_PERSONAL`) REFERENCES `personal_militar` (`CEDULA`) ON UPDATE CASCADE;
 
---
--- Filtros para la tabla `personal_militar`
---
+ALTER TABLE `parque_armas`
+  ADD CONSTRAINT `FK_PARQUE_ARMAS_ARMA` FOREIGN KEY (`SERIAL_ARMA`) REFERENCES `armas` (`SERIAL_ARMA`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `FK_PARQUE_ARMAS_PARQUE` FOREIGN KEY (`ID_PARQUE`) REFERENCES `parques` (`ID_PARQUE`) ON DELETE CASCADE ON UPDATE CASCADE;
+
 ALTER TABLE `personal_militar`
   ADD CONSTRAINT `FK_PERSONAL_COMPANIA` FOREIGN KEY (`ID_COMPANIA`) REFERENCES `companias` (`ID_COMPANIA`) ON UPDATE CASCADE,
   ADD CONSTRAINT `FK_PERSONAL_JERARQUIA` FOREIGN KEY (`ID_JERARQUIA`) REFERENCES `jerarquias` (`ID_JERARQUIA`) ON UPDATE CASCADE;
+
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

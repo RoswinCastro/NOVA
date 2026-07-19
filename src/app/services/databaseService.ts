@@ -45,6 +45,21 @@ export interface ArmaPayload {
   URL_IMAGEN_ACCION?: string | null;
 }
 
+export interface Cargador {
+  ID_CARGADOR: number;
+  NOMBRE: string;
+  CAPACIDAD: number;
+  CANTIDAD_DISPONIBLE: number;
+  ESTADO: 'DISPONIBLE' | 'RESERVA' | 'MANTENIMIENTO';
+}
+
+export interface CargadorPayload {
+  NOMBRE: string;
+  CAPACIDAD: number;
+  CANTIDAD_DISPONIBLE: number;
+  ESTADO?: Cargador['ESTADO'];
+}
+
 export interface Movimiento {
   ID_MOVIMIENTO: number;
   TIPO_MOVIMIENTO: 'ENTRADA' | 'SALIDA';
@@ -116,10 +131,32 @@ export interface Jerarquia {
   NOMBRE_JERARQUIA: string;
 }
 
+export interface JerarquiaPayload {
+  NOMBRE_JERARQUIA: string;
+}
+
 export interface Compania {
   ID_COMPANIA: number;
   NOMBRE_COMPANIA: string;
   NUM_REGIMIENTO: string;
+}
+
+export interface CompaniaPayload {
+  NOMBRE_COMPANIA: string;
+  NUM_REGIMIENTO: string;
+}
+
+export interface Parque {
+  ID_PARQUE: number;
+  NOMBRE: string;
+  DESCRIPCION?: string | null;
+  CANTIDAD_ARMAS?: number;
+  TIENE_ARMA?: number | boolean;
+}
+
+export interface ParquePayload {
+  NOMBRE: string;
+  DESCRIPCION?: string | null;
 }
 
 export interface LecturaNFCResponse {
@@ -157,7 +194,7 @@ function extractErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-function logAndThrow(error: unknown, fallback: string) {
+function logAndThrow(error: unknown, fallback: string): never {
   console.error(fallback, error);
   throw error;
 }
@@ -170,7 +207,7 @@ export const personalService = {
       });
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al obtener personal');
+      return logAndThrow(error, 'Error al obtener personal');
     }
   },
 
@@ -183,7 +220,7 @@ export const personalService = {
         return null;
       }
 
-      logAndThrow(error, 'Error al buscar personal por cédula');
+      return logAndThrow(error, 'Error al buscar personal por cedula');
     }
   },
 
@@ -194,7 +231,7 @@ export const personalService = {
       });
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al buscar personal');
+      return logAndThrow(error, 'Error al buscar personal');
     }
   },
 
@@ -203,7 +240,7 @@ export const personalService = {
       const response = await api.post('/personal', personal);
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al crear personal');
+      return logAndThrow(error, 'Error al crear personal');
     }
   },
 
@@ -212,7 +249,15 @@ export const personalService = {
       const response = await api.put(`/personal/${cedula}`, personal);
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al actualizar personal');
+      return logAndThrow(error, 'Error al actualizar personal');
+    }
+  },
+
+  delete: async (cedula: string): Promise<void> => {
+    try {
+      await api.delete(`/personal/${cedula}`);
+    } catch (error) {
+      return logAndThrow(error, 'Error al eliminar personal');
     }
   },
 };
@@ -225,7 +270,7 @@ export const armasService = {
       });
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al obtener armas');
+      return logAndThrow(error, 'Error al obtener armas');
     }
   },
 
@@ -238,7 +283,7 @@ export const armasService = {
         return null;
       }
 
-      logAndThrow(error, 'Error al buscar arma por serial');
+      return logAndThrow(error, 'Error al buscar arma por serial');
     }
   },
 
@@ -251,7 +296,7 @@ export const armasService = {
         return null;
       }
 
-      logAndThrow(error, 'Error al buscar arma por TAG NFC');
+      return logAndThrow(error, 'Error al buscar arma por TAG NFC');
     }
   },
 
@@ -260,7 +305,7 @@ export const armasService = {
       const response = await api.post('/armas', arma);
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al crear arma');
+      return logAndThrow(error, 'Error al crear arma');
     }
   },
 
@@ -269,7 +314,7 @@ export const armasService = {
       const response = await api.put(`/armas/${serial}`, arma);
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al actualizar arma');
+      return logAndThrow(error, 'Error al actualizar arma');
     }
   },
 
@@ -278,7 +323,109 @@ export const armasService = {
       const response = await api.patch(`/armas/${serial}/estado`, { estado });
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al actualizar estado del arma');
+      return logAndThrow(error, 'Error al actualizar estado del arma');
+    }
+  },
+
+  delete: async (serial: string): Promise<void> => {
+    try {
+      await api.delete(`/armas/${serial}`);
+    } catch (error) {
+      return logAndThrow(error, 'Error al eliminar arma');
+    }
+  },
+};
+
+export const cargadoresService = {
+  getAll: async (): Promise<Cargador[]> => {
+    try {
+      const response = await api.get('/cargadores');
+      return response.data;
+    } catch (error) {
+      return logAndThrow(error, 'Error al obtener cargadores');
+    }
+  },
+
+  create: async (cargador: CargadorPayload): Promise<Cargador> => {
+    try {
+      const response = await api.post('/cargadores', cargador);
+      return response.data;
+    } catch (error) {
+      return logAndThrow(error, 'Error al crear cargador');
+    }
+  },
+
+  update: async (id: number, cargador: CargadorPayload): Promise<Cargador> => {
+    try {
+      const response = await api.put(`/cargadores/${id}`, cargador);
+      return response.data;
+    } catch (error) {
+      return logAndThrow(error, 'Error al actualizar cargador');
+    }
+  },
+
+  delete: async (id: number): Promise<void> => {
+    try {
+      await api.delete(`/cargadores/${id}`);
+    } catch (error) {
+      return logAndThrow(error, 'Error al eliminar cargador');
+    }
+  },
+};
+
+export const parquesService = {
+  getAll: async (serial?: string): Promise<Parque[]> => {
+    try {
+      const response = await api.get('/parques', {
+        params: serial ? { serial } : undefined,
+      });
+      return response.data;
+    } catch (error) {
+      return logAndThrow(error, 'Error al obtener parques');
+    }
+  },
+
+  create: async (parque: ParquePayload): Promise<Parque> => {
+    try {
+      const response = await api.post('/parques', parque);
+      return response.data;
+    } catch (error) {
+      return logAndThrow(error, 'Error al crear parque');
+    }
+  },
+
+  update: async (id: number, parque: ParquePayload): Promise<Parque> => {
+    try {
+      const response = await api.put(`/parques/${id}`, parque);
+      return response.data;
+    } catch (error) {
+      return logAndThrow(error, 'Error al actualizar parque');
+    }
+  },
+
+  delete: async (id: number): Promise<void> => {
+    try {
+      await api.delete(`/parques/${id}`);
+    } catch (error) {
+      return logAndThrow(error, 'Error al eliminar parque');
+    }
+  },
+
+  assignArma: async (id: number, serial: string): Promise<void> => {
+    try {
+      await api.post(`/parques/${id}/armas`, {
+        SERIAL_ARMA: serial,
+      });
+    } catch (error) {
+      return logAndThrow(error, 'Error al asignar arma al parque');
+    }
+  },
+
+  removeArma: async (id: number, serial: string): Promise<void> => {
+    try {
+      await api.delete(`/parques/${id}/armas/${encodeURIComponent(serial)}`);
+    } catch (error) {
+      return logAndThrow(error, 'Error al retirar arma del parque');
     }
   },
 };
@@ -289,7 +436,7 @@ export const movimientosService = {
       const response = await api.post('/movimientos', movimiento);
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al registrar movimiento');
+      return logAndThrow(error, 'Error al registrar movimiento');
     }
   },
 
@@ -300,7 +447,7 @@ export const movimientosService = {
       });
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al obtener movimientos');
+      return logAndThrow(error, 'Error al obtener movimientos');
     }
   },
 
@@ -323,7 +470,7 @@ export const movimientosService = {
       });
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al obtener últimos movimientos');
+      return logAndThrow(error, 'Error al obtener ultimos movimientos');
     }
   },
 };
@@ -336,7 +483,7 @@ export const folioRevistasService = {
       });
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al obtener folios de revista');
+      return logAndThrow(error, 'Error al obtener folios de revista');
     }
   },
 
@@ -349,7 +496,7 @@ export const folioRevistasService = {
         return null;
       }
 
-      logAndThrow(error, 'Error al obtener folio de revista');
+      return logAndThrow(error, 'Error al obtener folio de revista');
     }
   },
 
@@ -358,7 +505,7 @@ export const folioRevistasService = {
       const response = await api.post('/folio-revistas', folio);
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al crear folio de revista');
+      return logAndThrow(error, 'Error al crear folio de revista');
     }
   },
 
@@ -377,7 +524,7 @@ export const catalogosService = {
       const response = await api.get('/catalogos/jerarquias');
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al obtener jerarquías');
+      return logAndThrow(error, 'Error al obtener jerarquias');
     }
   },
 
@@ -386,7 +533,59 @@ export const catalogosService = {
       const response = await api.get('/catalogos/companias');
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al obtener compañías');
+      return logAndThrow(error, 'Error al obtener companias');
+    }
+  },
+
+  createJerarquia: async (payload: JerarquiaPayload): Promise<Jerarquia> => {
+    try {
+      const response = await api.post('/catalogos/jerarquias', payload);
+      return response.data;
+    } catch (error) {
+      return logAndThrow(error, 'Error al crear jerarquia');
+    }
+  },
+
+  updateJerarquia: async (id: number, payload: JerarquiaPayload): Promise<Jerarquia> => {
+    try {
+      const response = await api.put(`/catalogos/jerarquias/${id}`, payload);
+      return response.data;
+    } catch (error) {
+      return logAndThrow(error, 'Error al actualizar jerarquia');
+    }
+  },
+
+  deleteJerarquia: async (id: number): Promise<void> => {
+    try {
+      await api.delete(`/catalogos/jerarquias/${id}`);
+    } catch (error) {
+      return logAndThrow(error, 'Error al eliminar jerarquia');
+    }
+  },
+
+  createCompania: async (payload: CompaniaPayload): Promise<Compania> => {
+    try {
+      const response = await api.post('/catalogos/companias', payload);
+      return response.data;
+    } catch (error) {
+      return logAndThrow(error, 'Error al crear compania');
+    }
+  },
+
+  updateCompania: async (id: number, payload: CompaniaPayload): Promise<Compania> => {
+    try {
+      const response = await api.put(`/catalogos/companias/${id}`, payload);
+      return response.data;
+    } catch (error) {
+      return logAndThrow(error, 'Error al actualizar compania');
+    }
+  },
+
+  deleteCompania: async (id: number): Promise<void> => {
+    try {
+      await api.delete(`/catalogos/companias/${id}`);
+    } catch (error) {
+      return logAndThrow(error, 'Error al eliminar compania');
     }
   },
 };
@@ -405,7 +604,7 @@ export const lectoresService = {
       });
       return response.data;
     } catch (error) {
-      logAndThrow(error, 'Error al procesar lectura NFC');
+      return logAndThrow(error, 'Error al procesar lectura NFC');
     }
   },
 };
@@ -415,6 +614,7 @@ export { API_BASE_URL, extractErrorMessage };
 export default {
   personal: personalService,
   armas: armasService,
+  cargadores: cargadoresService,
   movimientos: movimientosService,
   folioRevistas: folioRevistasService,
   catalogos: catalogosService,

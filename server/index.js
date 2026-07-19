@@ -58,6 +58,7 @@ const FOLIOS_SELECT = `
 `;
 
 const VALID_WEAPON_STATES = new Set(['DISPONIBLE', 'ASIGNADO', 'MANTENIMIENTO']);
+const VALID_MAGAZINE_STATES = new Set(['DISPONIBLE', 'RESERVA', 'MANTENIMIENTO']);
 const VALID_MOVEMENT_TYPES = new Set(['ENTRADA', 'SALIDA']);
 
 function isFilled(value) {
@@ -95,14 +96,62 @@ function sendInternalError(res, context, error) {
   res.status(500).json({ error: 'Error interno del servidor' });
 }
 
+function isForeignKeyRestrictionError(error) {
+  return error && (error.code === 'ER_ROW_IS_REFERENCED_2' || error.code === 'ER_ROW_IS_REFERENCED');
+}
+
+async function ensureCargadoresTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cargadores (
+      ID_CARGADOR BIGINT NOT NULL AUTO_INCREMENT,
+      NOMBRE VARCHAR(80) NOT NULL,
+      CAPACIDAD INT NOT NULL,
+      CANTIDAD_DISPONIBLE INT NOT NULL DEFAULT 0,
+      ESTADO ENUM('DISPONIBLE', 'RESERVA', 'MANTENIMIENTO') NOT NULL DEFAULT 'DISPONIBLE',
+      PRIMARY KEY (ID_CARGADOR)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+  `);
+}
+
+async function ensureParquesTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS parques (
+      ID_PARQUE BIGINT NOT NULL AUTO_INCREMENT,
+      NOMBRE VARCHAR(80) NOT NULL,
+      DESCRIPCION VARCHAR(200) DEFAULT NULL,
+      PRIMARY KEY (ID_PARQUE),
+      UNIQUE KEY UQ_PARQUES_NOMBRE (NOMBRE)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS parque_armas (
+      ID_PARQUE BIGINT NOT NULL,
+      SERIAL_ARMA VARCHAR(20) NOT NULL,
+      ASIGNADO_EN DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (ID_PARQUE, SERIAL_ARMA),
+      CONSTRAINT FK_PARQUE_ARMAS_PARQUE
+        FOREIGN KEY (ID_PARQUE) REFERENCES parques (ID_PARQUE)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+      CONSTRAINT FK_PARQUE_ARMAS_ARMA
+        FOREIGN KEY (SERIAL_ARMA) REFERENCES armas (SERIAL_ARMA)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+  `);
+}
+
 async function testConnection() {
   try {
     const connection = await pool.getConnection();
-    console.log('✅ Conectado a MySQL/MariaDB correctamente');
+    console.log('Conectado a MySQL/MariaDB correctamente');
     connection.release();
+    await ensureCargadoresTable();
+    await ensureParquesTables();
   } catch (error) {
-    console.error('❌ Error conectando a MySQL/MariaDB:', error.message);
-    console.log('⚠️ Verifica que el servicio esté levantado y que server/.env sea correcto');
+    console.error('Error conectando a MySQL/MariaDB:', error.message);
+    console.log('Verifica que el servicio este levantado y que server/.env sea correcto');
   }
 }
 
@@ -115,9 +164,9 @@ app.get('/api/personal', async (req, res) => {
     const params = [];
 
     if (isFilled(q)) {
-      filters.push('(p.CEDULA LIKE ? OR p.NOMBRE LIKE ? OR p.APELLIDO LIKE ?)');
+      filters.push('(p.CEDULA LIKE ? OR p.NOMBRE LIKE ? OR p.APELLIDO LIKE ? OR c.NOMBRE_COMPANIA LIKE ? OR j.NOMBRE_JERARQUIA LIKE ?)');
       const pattern = `%${String(q).trim()}%`;
-      params.push(pattern, pattern, pattern);
+      params.push(pattern, pattern, pattern, pattern, pattern);
     }
 
     const query = `
@@ -162,9 +211,9 @@ app.post('/api/personal', async (req, res) => {
       return res.status(400).json({ error: 'Faltan campos obligatorios del personal' });
     }
 
-    const [existingRows] = await pool.query('SELECT CEDULA FROM personal_militar WHERE CEDULA = ?', [CEDULA]);
+    const [existingRows] = await pool.query('SELECT CEDULA FROM personal_militar WHERE CEDULA = ?', [String(CEDULA).trim()]);
     if (existingRows.length > 0) {
-      return res.status(409).json({ error: 'La cédula ya existe' });
+      return res.status(409).json({ error: 'La cedula ya existe' });
     }
 
     await pool.query(
@@ -195,7 +244,7 @@ app.post('/api/personal', async (req, res) => {
     res.status(201).json(createdRows[0]);
   } catch (error) {
     if (error && error.code === 'ER_NO_REFERENCED_ROW_2') {
-      return res.status(400).json({ error: 'Jerarquía o compañía inválida' });
+      return res.status(400).json({ error: 'Jerarquia o compania invalida' });
     }
 
     sendInternalError(res, 'Error en POST /api/personal:', error);
@@ -248,10 +297,29 @@ app.put('/api/personal/:cedula', async (req, res) => {
     res.json(updatedRows[0]);
   } catch (error) {
     if (error && error.code === 'ER_NO_REFERENCED_ROW_2') {
-      return res.status(400).json({ error: 'Jerarquía o compañía inválida' });
+      return res.status(400).json({ error: 'Jerarquia o compania invalida' });
     }
 
     sendInternalError(res, 'Error en PUT /api/personal/:cedula:', error);
+  }
+});
+
+app.delete('/api/personal/:cedula', async (req, res) => {
+  try {
+    const { cedula } = req.params;
+    const [result] = await pool.query('DELETE FROM personal_militar WHERE CEDULA = ?', [cedula]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Personal no encontrado' });
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    if (isForeignKeyRestrictionError(error)) {
+      return res.status(409).json({ error: 'No se puede eliminar el personal porque tiene registros asociados' });
+    }
+
+    sendInternalError(res, 'Error en DELETE /api/personal/:cedula:', error);
   }
 });
 
@@ -294,15 +362,15 @@ app.post('/api/armas', async (req, res) => {
 
     const estado = isFilled(ESTADO_DISPONIBILIDAD) ? String(ESTADO_DISPONIBILIDAD).trim() : 'DISPONIBLE';
     if (!VALID_WEAPON_STATES.has(estado)) {
-      return res.status(400).json({ error: 'Estado de disponibilidad inválido' });
+      return res.status(400).json({ error: 'Estado de disponibilidad invalido' });
     }
 
-    const [serialRows] = await pool.query('SELECT SERIAL_ARMA FROM armas WHERE SERIAL_ARMA = ?', [SERIAL_ARMA]);
+    const [serialRows] = await pool.query('SELECT SERIAL_ARMA FROM armas WHERE SERIAL_ARMA = ?', [String(SERIAL_ARMA).trim()]);
     if (serialRows.length > 0) {
       return res.status(409).json({ error: 'El serial del arma ya existe' });
     }
 
-    const [tagRows] = await pool.query('SELECT TAG_NFC FROM armas WHERE TAG_NFC = ?', [TAG_NFC]);
+    const [tagRows] = await pool.query('SELECT TAG_NFC FROM armas WHERE TAG_NFC = ?', [String(TAG_NFC).trim()]);
     if (tagRows.length > 0) {
       return res.status(409).json({ error: 'El TAG NFC ya existe' });
     }
@@ -379,8 +447,9 @@ app.put('/api/armas/:serial', async (req, res) => {
       return res.status(400).json({ error: 'Faltan campos obligatorios del arma' });
     }
 
-    if (!VALID_WEAPON_STATES.has(String(ESTADO_DISPONIBILIDAD).trim())) {
-      return res.status(400).json({ error: 'Estado de disponibilidad inválido' });
+    const estado = String(ESTADO_DISPONIBILIDAD).trim();
+    if (!VALID_WEAPON_STATES.has(estado)) {
+      return res.status(400).json({ error: 'Estado de disponibilidad invalido' });
     }
 
     const [tagRows] = await pool.query(
@@ -409,7 +478,7 @@ app.put('/api/armas/:serial', async (req, res) => {
         String(TIPO).trim(),
         String(CALIBRE).trim(),
         toInteger(CAPACIDAD_CARGA),
-        String(ESTADO_DISPONIBILIDAD).trim(),
+        estado,
         toNullableString(URL_IMAGEN_ACCION),
         serial,
       ]
@@ -432,7 +501,7 @@ app.patch('/api/armas/:serial/estado', async (req, res) => {
     const { estado } = req.body;
 
     if (!isFilled(estado) || !VALID_WEAPON_STATES.has(String(estado).trim())) {
-      return res.status(400).json({ error: 'Estado de disponibilidad inválido' });
+      return res.status(400).json({ error: 'Estado de disponibilidad invalido' });
     }
 
     const [result] = await pool.query(
@@ -448,6 +517,335 @@ app.patch('/api/armas/:serial/estado', async (req, res) => {
     res.json(updatedRows[0]);
   } catch (error) {
     sendInternalError(res, 'Error en PATCH /api/armas/:serial/estado:', error);
+  }
+});
+
+app.delete('/api/armas/:serial', async (req, res) => {
+  try {
+    const { serial } = req.params;
+    const [result] = await pool.query('DELETE FROM armas WHERE SERIAL_ARMA = ?', [serial]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Arma no encontrada' });
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    if (isForeignKeyRestrictionError(error)) {
+      return res.status(409).json({ error: 'No se puede eliminar el arma porque tiene registros asociados' });
+    }
+
+    sendInternalError(res, 'Error en DELETE /api/armas/:serial:', error);
+  }
+});
+
+app.get('/api/cargadores', async (_req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM cargadores ORDER BY NOMBRE ASC, CAPACIDAD ASC, ID_CARGADOR ASC');
+    res.json(rows);
+  } catch (error) {
+    sendInternalError(res, 'Error en GET /api/cargadores:', error);
+  }
+});
+
+app.post('/api/cargadores', async (req, res) => {
+  try {
+    const { NOMBRE, CAPACIDAD, CANTIDAD_DISPONIBLE, ESTADO } = req.body;
+
+    if (!isFilled(NOMBRE) || !isFilled(CAPACIDAD) || !isFilled(CANTIDAD_DISPONIBLE)) {
+      return res.status(400).json({ error: 'Faltan campos obligatorios del cargador' });
+    }
+
+    const estadoNormalizado = isFilled(ESTADO) ? String(ESTADO).trim() : 'DISPONIBLE';
+    if (!VALID_MAGAZINE_STATES.has(estadoNormalizado)) {
+      return res.status(400).json({ error: 'Estado del cargador invalido' });
+    }
+
+    const capacidad = toInteger(CAPACIDAD, -1);
+    const cantidad = toInteger(CANTIDAD_DISPONIBLE, -1);
+    if (capacidad < 0 || cantidad < 0) {
+      return res.status(400).json({ error: 'Capacidad y cantidad deben ser valores positivos o cero' });
+    }
+
+    const [result] = await pool.query(
+      `
+        INSERT INTO cargadores
+          (NOMBRE, CAPACIDAD, CANTIDAD_DISPONIBLE, ESTADO)
+        VALUES (?, ?, ?, ?)
+      `,
+      [String(NOMBRE).trim(), capacidad, cantidad, estadoNormalizado]
+    );
+
+    const [createdRows] = await pool.query('SELECT * FROM cargadores WHERE ID_CARGADOR = ?', [result.insertId]);
+    res.status(201).json(createdRows[0]);
+  } catch (error) {
+    sendInternalError(res, 'Error en POST /api/cargadores:', error);
+  }
+});
+
+app.put('/api/cargadores/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { NOMBRE, CAPACIDAD, CANTIDAD_DISPONIBLE, ESTADO } = req.body;
+
+    if (!isFilled(NOMBRE) || !isFilled(CAPACIDAD) || !isFilled(CANTIDAD_DISPONIBLE) || !isFilled(ESTADO)) {
+      return res.status(400).json({ error: 'Faltan campos obligatorios del cargador' });
+    }
+
+    const estadoNormalizado = String(ESTADO).trim();
+    if (!VALID_MAGAZINE_STATES.has(estadoNormalizado)) {
+      return res.status(400).json({ error: 'Estado del cargador invalido' });
+    }
+
+    const capacidad = toInteger(CAPACIDAD, -1);
+    const cantidad = toInteger(CANTIDAD_DISPONIBLE, -1);
+    if (capacidad < 0 || cantidad < 0) {
+      return res.status(400).json({ error: 'Capacidad y cantidad deben ser valores positivos o cero' });
+    }
+
+    const [result] = await pool.query(
+      `
+        UPDATE cargadores
+        SET NOMBRE = ?,
+            CAPACIDAD = ?,
+            CANTIDAD_DISPONIBLE = ?,
+            ESTADO = ?
+        WHERE ID_CARGADOR = ?
+      `,
+      [String(NOMBRE).trim(), capacidad, cantidad, estadoNormalizado, toInteger(id)]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Cargador no encontrado' });
+    }
+
+    const [updatedRows] = await pool.query('SELECT * FROM cargadores WHERE ID_CARGADOR = ?', [toInteger(id)]);
+    res.json(updatedRows[0]);
+  } catch (error) {
+    sendInternalError(res, 'Error en PUT /api/cargadores/:id:', error);
+  }
+});
+
+app.delete('/api/cargadores/:id', async (req, res) => {
+  try {
+    const [result] = await pool.query('DELETE FROM cargadores WHERE ID_CARGADOR = ?', [toInteger(req.params.id)]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Cargador no encontrado' });
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    sendInternalError(res, 'Error en DELETE /api/cargadores/:id:', error);
+  }
+});
+
+app.get('/api/parques', async (req, res) => {
+  try {
+    const serial = isFilled(req.query.serial) ? String(req.query.serial).trim() : null;
+
+    const query = serial
+      ? `
+          SELECT p.ID_PARQUE,
+                 p.NOMBRE,
+                 p.DESCRIPCION,
+                 COUNT(pa_all.SERIAL_ARMA) AS CANTIDAD_ARMAS,
+                 MAX(CASE WHEN pa_serial.SERIAL_ARMA IS NULL THEN 0 ELSE 1 END) AS TIENE_ARMA
+          FROM parques p
+          LEFT JOIN parque_armas pa_all ON pa_all.ID_PARQUE = p.ID_PARQUE
+          LEFT JOIN parque_armas pa_serial
+            ON pa_serial.ID_PARQUE = p.ID_PARQUE
+           AND pa_serial.SERIAL_ARMA = ?
+          GROUP BY p.ID_PARQUE, p.NOMBRE, p.DESCRIPCION
+          ORDER BY p.NOMBRE ASC, p.ID_PARQUE ASC
+        `
+      : `
+          SELECT p.ID_PARQUE,
+                 p.NOMBRE,
+                 p.DESCRIPCION,
+                 COUNT(pa.SERIAL_ARMA) AS CANTIDAD_ARMAS
+          FROM parques p
+          LEFT JOIN parque_armas pa ON pa.ID_PARQUE = p.ID_PARQUE
+          GROUP BY p.ID_PARQUE, p.NOMBRE, p.DESCRIPCION
+          ORDER BY p.NOMBRE ASC, p.ID_PARQUE ASC
+        `;
+
+    const [rows] = await pool.query(query, serial ? [serial] : []);
+    res.json(rows);
+  } catch (error) {
+    sendInternalError(res, 'Error en GET /api/parques:', error);
+  }
+});
+
+app.post('/api/parques', async (req, res) => {
+  try {
+    const { NOMBRE, DESCRIPCION } = req.body;
+
+    if (!isFilled(NOMBRE)) {
+      return res.status(400).json({ error: 'El nombre del parque es obligatorio' });
+    }
+
+    const nombre = String(NOMBRE).trim();
+    const [duplicateRows] = await pool.query('SELECT ID_PARQUE FROM parques WHERE NOMBRE = ?', [nombre]);
+    if (duplicateRows.length > 0) {
+      return res.status(409).json({ error: 'Ya existe un parque con ese nombre' });
+    }
+
+    const [result] = await pool.query(
+      `
+        INSERT INTO parques
+          (NOMBRE, DESCRIPCION)
+        VALUES (?, ?)
+      `,
+      [nombre, toNullableString(DESCRIPCION)]
+    );
+
+    const [createdRows] = await pool.query(
+      `
+        SELECT p.ID_PARQUE,
+               p.NOMBRE,
+               p.DESCRIPCION,
+               COUNT(pa.SERIAL_ARMA) AS CANTIDAD_ARMAS
+        FROM parques p
+        LEFT JOIN parque_armas pa ON pa.ID_PARQUE = p.ID_PARQUE
+        WHERE p.ID_PARQUE = ?
+        GROUP BY p.ID_PARQUE, p.NOMBRE, p.DESCRIPCION
+      `,
+      [result.insertId]
+    );
+
+    res.status(201).json(createdRows[0]);
+  } catch (error) {
+    sendInternalError(res, 'Error en POST /api/parques:', error);
+  }
+});
+
+app.put('/api/parques/:id', async (req, res) => {
+  try {
+    const id = toInteger(req.params.id);
+    const { NOMBRE, DESCRIPCION } = req.body;
+
+    if (!isFilled(NOMBRE)) {
+      return res.status(400).json({ error: 'El nombre del parque es obligatorio' });
+    }
+
+    const nombre = String(NOMBRE).trim();
+    const [duplicateRows] = await pool.query(
+      'SELECT ID_PARQUE FROM parques WHERE NOMBRE = ? AND ID_PARQUE <> ?',
+      [nombre, id]
+    );
+    if (duplicateRows.length > 0) {
+      return res.status(409).json({ error: 'Ya existe un parque con ese nombre' });
+    }
+
+    const [result] = await pool.query(
+      `
+        UPDATE parques
+        SET NOMBRE = ?,
+            DESCRIPCION = ?
+        WHERE ID_PARQUE = ?
+      `,
+      [nombre, toNullableString(DESCRIPCION), id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Parque no encontrado' });
+    }
+
+    const [updatedRows] = await pool.query(
+      `
+        SELECT p.ID_PARQUE,
+               p.NOMBRE,
+               p.DESCRIPCION,
+               COUNT(pa.SERIAL_ARMA) AS CANTIDAD_ARMAS
+        FROM parques p
+        LEFT JOIN parque_armas pa ON pa.ID_PARQUE = p.ID_PARQUE
+        WHERE p.ID_PARQUE = ?
+        GROUP BY p.ID_PARQUE, p.NOMBRE, p.DESCRIPCION
+      `,
+      [id]
+    );
+
+    res.json(updatedRows[0]);
+  } catch (error) {
+    sendInternalError(res, 'Error en PUT /api/parques/:id:', error);
+  }
+});
+
+app.delete('/api/parques/:id', async (req, res) => {
+  try {
+    const [result] = await pool.query('DELETE FROM parques WHERE ID_PARQUE = ?', [toInteger(req.params.id)]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Parque no encontrado' });
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    sendInternalError(res, 'Error en DELETE /api/parques/:id:', error);
+  }
+});
+
+app.post('/api/parques/:id/armas', async (req, res) => {
+  try {
+    const idParque = toInteger(req.params.id);
+    const { SERIAL_ARMA } = req.body;
+
+    if (!isFilled(SERIAL_ARMA)) {
+      return res.status(400).json({ error: 'El serial del arma es obligatorio' });
+    }
+
+    const serial = String(SERIAL_ARMA).trim();
+
+    const [parqueRows] = await pool.query('SELECT ID_PARQUE FROM parques WHERE ID_PARQUE = ?', [idParque]);
+    if (parqueRows.length === 0) {
+      return res.status(404).json({ error: 'Parque no encontrado' });
+    }
+
+    const [armaRows] = await pool.query('SELECT SERIAL_ARMA FROM armas WHERE SERIAL_ARMA = ?', [serial]);
+    if (armaRows.length === 0) {
+      return res.status(404).json({ error: 'Arma no encontrada' });
+    }
+
+    const [existingRows] = await pool.query(
+      'SELECT ID_PARQUE FROM parque_armas WHERE ID_PARQUE = ? AND SERIAL_ARMA = ?',
+      [idParque, serial]
+    );
+    if (existingRows.length > 0) {
+      return res.status(409).json({ error: 'El arma ya esta asignada a este parque' });
+    }
+
+    await pool.query(
+      `
+        INSERT INTO parque_armas
+          (ID_PARQUE, SERIAL_ARMA)
+        VALUES (?, ?)
+      `,
+      [idParque, serial]
+    );
+
+    res.status(204).send();
+  } catch (error) {
+    sendInternalError(res, 'Error en POST /api/parques/:id/armas:', error);
+  }
+});
+
+app.delete('/api/parques/:id/armas/:serial', async (req, res) => {
+  try {
+    const idParque = toInteger(req.params.id);
+    const serial = String(req.params.serial).trim();
+    const [result] = await pool.query(
+      'DELETE FROM parque_armas WHERE ID_PARQUE = ? AND SERIAL_ARMA = ?',
+      [idParque, serial]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'La asignacion del arma en el parque no existe' });
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    sendInternalError(res, 'Error en DELETE /api/parques/:id/armas/:serial:', error);
   }
 });
 
@@ -531,7 +929,7 @@ app.post('/api/movimientos', async (req, res) => {
 
     const tipoMovimiento = String(TIPO_MOVIMIENTO).trim().toUpperCase();
     if (!VALID_MOVEMENT_TYPES.has(tipoMovimiento)) {
-      return res.status(400).json({ error: 'Tipo de movimiento inválido' });
+      return res.status(400).json({ error: 'Tipo de movimiento invalido' });
     }
 
     await connection.beginTransaction();
@@ -551,12 +949,12 @@ app.post('/api/movimientos', async (req, res) => {
     const arma = armaRows[0];
     if (tipoMovimiento === 'SALIDA' && arma.ESTADO_DISPONIBILIDAD !== 'DISPONIBLE') {
       await connection.rollback();
-      return res.status(409).json({ error: 'El arma no está disponible para salida' });
+      return res.status(409).json({ error: 'El arma no esta disponible para salida' });
     }
 
     if (tipoMovimiento === 'ENTRADA' && arma.ESTADO_DISPONIBILIDAD !== 'ASIGNADO') {
       await connection.rollback();
-      return res.status(409).json({ error: 'El arma no está asignada para registrar entrada' });
+      return res.status(409).json({ error: 'El arma no esta asignada para registrar entrada' });
     }
 
     const [result] = await connection.query(
@@ -761,6 +1159,68 @@ app.get('/api/catalogos/jerarquias', async (_req, res) => {
   }
 });
 
+app.post('/api/catalogos/jerarquias', async (req, res) => {
+  try {
+    const { NOMBRE_JERARQUIA } = req.body;
+
+    if (!isFilled(NOMBRE_JERARQUIA)) {
+      return res.status(400).json({ error: 'El nombre de la jerarquia es obligatorio' });
+    }
+
+    const [result] = await pool.query(
+      'INSERT INTO jerarquias (NOMBRE_JERARQUIA) VALUES (?)',
+      [String(NOMBRE_JERARQUIA).trim()]
+    );
+
+    const [createdRows] = await pool.query('SELECT * FROM jerarquias WHERE ID_JERARQUIA = ?', [result.insertId]);
+    res.status(201).json(createdRows[0]);
+  } catch (error) {
+    sendInternalError(res, 'Error en POST /api/catalogos/jerarquias:', error);
+  }
+});
+
+app.put('/api/catalogos/jerarquias/:id', async (req, res) => {
+  try {
+    const { NOMBRE_JERARQUIA } = req.body;
+
+    if (!isFilled(NOMBRE_JERARQUIA)) {
+      return res.status(400).json({ error: 'El nombre de la jerarquia es obligatorio' });
+    }
+
+    const [result] = await pool.query(
+      'UPDATE jerarquias SET NOMBRE_JERARQUIA = ? WHERE ID_JERARQUIA = ?',
+      [String(NOMBRE_JERARQUIA).trim(), toInteger(req.params.id)]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Jerarquia no encontrada' });
+    }
+
+    const [updatedRows] = await pool.query('SELECT * FROM jerarquias WHERE ID_JERARQUIA = ?', [toInteger(req.params.id)]);
+    res.json(updatedRows[0]);
+  } catch (error) {
+    sendInternalError(res, 'Error en PUT /api/catalogos/jerarquias/:id:', error);
+  }
+});
+
+app.delete('/api/catalogos/jerarquias/:id', async (req, res) => {
+  try {
+    const [result] = await pool.query('DELETE FROM jerarquias WHERE ID_JERARQUIA = ?', [toInteger(req.params.id)]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Jerarquia no encontrada' });
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    if (isForeignKeyRestrictionError(error)) {
+      return res.status(409).json({ error: 'No se puede eliminar la jerarquia porque esta en uso' });
+    }
+
+    sendInternalError(res, 'Error en DELETE /api/catalogos/jerarquias/:id:', error);
+  }
+});
+
 app.get('/api/catalogos/companias', async (_req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM companias ORDER BY ID_COMPANIA ASC');
@@ -770,7 +1230,69 @@ app.get('/api/catalogos/companias', async (_req, res) => {
   }
 });
 
+app.post('/api/catalogos/companias', async (req, res) => {
+  try {
+    const { NOMBRE_COMPANIA, NUM_REGIMIENTO } = req.body;
+
+    if (!isFilled(NOMBRE_COMPANIA) || !isFilled(NUM_REGIMIENTO)) {
+      return res.status(400).json({ error: 'Nombre de compania y regimiento son obligatorios' });
+    }
+
+    const [result] = await pool.query(
+      'INSERT INTO companias (NOMBRE_COMPANIA, NUM_REGIMIENTO) VALUES (?, ?)',
+      [String(NOMBRE_COMPANIA).trim(), String(NUM_REGIMIENTO).trim()]
+    );
+
+    const [createdRows] = await pool.query('SELECT * FROM companias WHERE ID_COMPANIA = ?', [result.insertId]);
+    res.status(201).json(createdRows[0]);
+  } catch (error) {
+    sendInternalError(res, 'Error en POST /api/catalogos/companias:', error);
+  }
+});
+
+app.put('/api/catalogos/companias/:id', async (req, res) => {
+  try {
+    const { NOMBRE_COMPANIA, NUM_REGIMIENTO } = req.body;
+
+    if (!isFilled(NOMBRE_COMPANIA) || !isFilled(NUM_REGIMIENTO)) {
+      return res.status(400).json({ error: 'Nombre de compania y regimiento son obligatorios' });
+    }
+
+    const [result] = await pool.query(
+      'UPDATE companias SET NOMBRE_COMPANIA = ?, NUM_REGIMIENTO = ? WHERE ID_COMPANIA = ?',
+      [String(NOMBRE_COMPANIA).trim(), String(NUM_REGIMIENTO).trim(), toInteger(req.params.id)]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Compania no encontrada' });
+    }
+
+    const [updatedRows] = await pool.query('SELECT * FROM companias WHERE ID_COMPANIA = ?', [toInteger(req.params.id)]);
+    res.json(updatedRows[0]);
+  } catch (error) {
+    sendInternalError(res, 'Error en PUT /api/catalogos/companias/:id:', error);
+  }
+});
+
+app.delete('/api/catalogos/companias/:id', async (req, res) => {
+  try {
+    const [result] = await pool.query('DELETE FROM companias WHERE ID_COMPANIA = ?', [toInteger(req.params.id)]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Compania no encontrada' });
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    if (isForeignKeyRestrictionError(error)) {
+      return res.status(409).json({ error: 'No se puede eliminar la compania porque esta en uso' });
+    }
+
+    sendInternalError(res, 'Error en DELETE /api/catalogos/companias/:id:', error);
+  }
+});
+
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
-  console.log(`📊 Base de datos: ${process.env.DB_NAME || 'control_armamento_nfc'}`);
+  console.log(`Servidor corriendo en http://localhost:${PORT}`);
+  console.log(`Base de datos: ${process.env.DB_NAME || 'control_armamento_nfc'}`);
 });
