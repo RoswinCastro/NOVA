@@ -33,6 +33,16 @@ type SectionKey =
   | "personal"
   | "configuracion";
 
+const ACTIVE_SECTION_STORAGE_KEY = "nova-active-section";
+const VALID_SECTION_KEYS: SectionKey[] = [
+  "inicio",
+  "armas",
+  "registro",
+  "historial",
+  "personal",
+  "configuracion",
+];
+
 function AuthenticatedApp({
   user,
   logout,
@@ -41,7 +51,15 @@ function AuthenticatedApp({
   logout: () => void;
 }) {
   const userRole = user.role;
-  const [activeSection, setActiveSection] = useState<SectionKey>("inicio");
+  const [activeSection, setActiveSection] = useState<SectionKey>(() => {
+    const storedSection = window.localStorage.getItem(
+      ACTIVE_SECTION_STORAGE_KEY,
+    );
+
+    return VALID_SECTION_KEYS.includes(storedSection as SectionKey)
+      ? (storedSection as SectionKey)
+      : "inicio";
+  });
   const [barraLateralHorizontal, setBarraLateralHorizontal] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMobileHeaderVisible, setIsMobileHeaderVisible] = useState(true);
@@ -75,6 +93,10 @@ function AuthenticatedApp({
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
+  }, [activeSection]);
+
+  useEffect(() => {
+    window.localStorage.setItem(ACTIVE_SECTION_STORAGE_KEY, activeSection);
   }, [activeSection]);
 
   useEffect(() => {

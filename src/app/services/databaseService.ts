@@ -108,6 +108,12 @@ export interface FolioRevista {
   OBSERVACION?: string | null;
   NOMBRE_PERSONAL?: string;
   NOMBRE_INSPECTOR?: string;
+  PERSONAL_NOMBRE?: string;
+  PERSONAL_APELLIDO?: string;
+  JERARQUIA_PERSONAL?: string;
+  INSPECTOR_NOMBRE?: string;
+  INSPECTOR_APELLIDO?: string;
+  JERARQUIA_INSPECTOR?: string;
 }
 
 export interface FolioRevistaPayload {

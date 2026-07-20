@@ -8,6 +8,7 @@ import {
   type Movimiento,
 } from '../services/databaseService';
 import { formatCedula } from '../utils/cedula';
+import { formatMilitaryDisplayName } from '../utils/militaryDisplay';
 
 type VistaHistorial = 'movimientos' | 'folios';
 
@@ -205,7 +206,14 @@ export function RegistroModule() {
                   >
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-semibold text-gray-800 dark:text-slate-100">{movimiento.NOMBRE_COMPLETO || '-'}</p>
+                        <p className="font-semibold text-gray-800 dark:text-slate-100">
+                          {formatMilitaryDisplayName({
+                            jerarquia: movimiento.JERARQUIA_NOMBRE,
+                            nombre: movimiento.NOMBRE,
+                            apellido: movimiento.APELLIDO,
+                            nombreCompleto: movimiento.NOMBRE_COMPLETO,
+                          })}
+                        </p>
                         <span
                           className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                             movimiento.TIPO_MOVIMIENTO === 'ENTRADA'
@@ -287,7 +295,14 @@ export function RegistroModule() {
                     className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left transition-colors hover:bg-gray-50 dark:hover:bg-slate-800/60"
                   >
                     <div className="min-w-0">
-                      <p className="font-semibold text-gray-800 dark:text-slate-100">{folio.NOMBRE_PERSONAL || '-'}</p>
+                      <p className="font-semibold text-gray-800 dark:text-slate-100">
+                        {formatMilitaryDisplayName({
+                          jerarquia: folio.JERARQUIA_PERSONAL,
+                          nombre: folio.PERSONAL_NOMBRE,
+                          apellido: folio.PERSONAL_APELLIDO,
+                          nombreCompleto: folio.NOMBRE_PERSONAL,
+                        })}
+                      </p>
                       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-slate-300">
                         <span>{formatDateTime(folio.GRUPO_FECHA_HORA)}</span>
                         <span>{formatCedula(folio.ID_CEDULA_PERSONAL)}</span>
@@ -305,7 +320,15 @@ export function RegistroModule() {
                         <InfoItem label="Cedula" value={formatCedula(folio.ID_CEDULA_PERSONAL)} />
                         <InfoItem label="Puesto" value={folio.PUESTO_SERVICIO} />
                         <InfoItem label="Grupo" value={folio.REVISTA_GRUPO} />
-                        <InfoItem label="Inspector" value={folio.NOMBRE_INSPECTOR || '-'} />
+                        <InfoItem
+                          label="Inspector"
+                          value={formatMilitaryDisplayName({
+                            jerarquia: folio.JERARQUIA_INSPECTOR,
+                            nombre: folio.INSPECTOR_NOMBRE,
+                            apellido: folio.INSPECTOR_APELLIDO,
+                            nombreCompleto: folio.NOMBRE_INSPECTOR,
+                          })}
+                        />
                         <InfoItem label="Cedula inspector" value={formatCedula(folio.CEDULA_INSPECTOR)} />
                         <InfoItem label="Observacion" value={folio.OBSERVACION || '-'} />
                       </div>

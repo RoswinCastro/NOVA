@@ -21,6 +21,7 @@ import { type NFCData, useNFC } from '../services/nfcServices';
 import {
   armasService,
   extractErrorMessage,
+  lectoresService,
   movimientosService,
   personalService,
   type Arma,
@@ -28,6 +29,7 @@ import {
   type PersonalMilitar,
 } from '../services/databaseService';
 import { formatCedula } from '../utils/cedula';
+import { formatMilitaryDisplayName } from '../utils/militaryDisplay';
 
 type ModoLectura = 'nfc' | 'manual';
 type TipoRegistro = 'entrada' | 'salida';
@@ -481,8 +483,12 @@ export function RegistroEntradaSalidaModule() {
     setRegistroMensaje(null);
 
     try {
-      const armaPorSerial = await armasService.getBySerial(identifier);
-      const arma = armaPorSerial || (await armasService.getByNFC(identifier));
+      const lecturaProcesada = await lectoresService.procesarLectura(
+        identifier,
+        'ENTRADA',
+        'WEB_NFC'
+      );
+      const arma = lecturaProcesada.arma;
 
       if (!arma) {
         setSerial('');
@@ -495,11 +501,21 @@ export function RegistroEntradaSalidaModule() {
         return;
       }
 
+      if (lecturaProcesada.personalCedula && arma.ESTADO_DISPONIBILIDAD === 'ASIGNADO') {
+        const personalAsociado = await personalService.getByCedula(lecturaProcesada.personalCedula);
+        if (personalAsociado) {
+          aplicarPersonal(personalAsociado, false);
+        }
+      }
+
       aplicarArma(arma, false);
       setNfcNotice({
         exito: true,
         titulo: 'Lectura completada',
-        mensaje: `Arma encontrada:\n${arma.SERIAL_ARMA}`,
+        mensaje:
+          lecturaProcesada.personalCedula && arma.ESTADO_DISPONIBILIDAD === 'ASIGNADO'
+            ? `Arma encontrada:\n${arma.SERIAL_ARMA}\n\nPersonal asociado:\n${lecturaProcesada.personalCedula}`
+            : `Arma encontrada:\n${arma.SERIAL_ARMA}`,
       });
     } catch (searchError) {
       setSerial('');
@@ -1161,7 +1177,14 @@ export function RegistroEntradaSalidaModule() {
                   >
                     <div className="min-w-0 space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate font-semibold text-gray-800 dark:text-slate-100">{registro.NOMBRE_COMPLETO || '-'}</p>
+                        <p className="truncate font-semibold text-gray-800 dark:text-slate-100">
+                          {formatMilitaryDisplayName({
+                            jerarquia: registro.JERARQUIA_NOMBRE,
+                            nombre: registro.NOMBRE,
+                            apellido: registro.APELLIDO,
+                            nombreCompleto: registro.NOMBRE_COMPLETO,
+                          })}
+                        </p>
                         <span
                           className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
                             registro.TIPO_MOVIMIENTO === 'ENTRADA' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
