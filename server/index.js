@@ -2,24 +2,71 @@ const express = require('express');
 const mysql = require('mysql2/promise');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const path = require('path');
+const { attachDatabasePool } = require('@vercel/functions');
 
-dotenv.config();
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+const globalForDatabase = globalThis;
 
-app.use(cors());
+function normalizeOrigin(origin) {
+  if (!origin || String(origin).trim() === '') {
+    return null;
+  }
+
+  return String(origin).trim().replace(/\/+$/, '');
+}
+
+function resolveDatabaseHost() {
+  const host = process.env.DB_HOST || '127.0.0.1';
+  return host === 'localhost' ? '127.0.0.1' : host;
+}
+
+function createDatabasePool() {
+  const databasePool = mysql.createPool({
+    host: resolveDatabaseHost(),
+    port: Number(process.env.DB_PORT || 3306),
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'control_armamento_nfc',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    enableKeepAlive: true,
+  });
+
+  attachDatabasePool(databasePool.pool || databasePool);
+  return databasePool;
+}
+
+const pool = globalForDatabase.__novaDatabasePool || createDatabasePool();
+if (!globalForDatabase.__novaDatabasePool) {
+  globalForDatabase.__novaDatabasePool = pool;
+}
+
+const allowedOrigins = new Set(
+  [
+    'http://localhost:5173',
+    normalizeOrigin(process.env.FRONTEND_URL),
+  ].filter(Boolean)
+);
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    callback(null, allowedOrigins.has(normalizeOrigin(origin)));
+  },
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json());
-
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'control_armamento_nfc',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-});
 
 const PERSONAL_SELECT = `
   SELECT p.*,
@@ -108,62 +155,35 @@ function isForeignKeyRestrictionError(error) {
   return error && (error.code === 'ER_ROW_IS_REFERENCED_2' || error.code === 'ER_ROW_IS_REFERENCED');
 }
 
-async function ensureCargadoresTable() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS cargadores (
-      ID_CARGADOR BIGINT NOT NULL AUTO_INCREMENT,
-      NOMBRE VARCHAR(80) NOT NULL,
-      CAPACIDAD INT NOT NULL,
-      CANTIDAD_DISPONIBLE INT NOT NULL DEFAULT 0,
-      ESTADO ENUM('DISPONIBLE', 'RESERVA', 'MANTENIMIENTO') NOT NULL DEFAULT 'DISPONIBLE',
-      PRIMARY KEY (ID_CARGADOR)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-  `);
-}
+async function pingDatabase() {
+  const connection = await pool.getConnection();
 
-async function ensureParquesTables() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS parques (
-      ID_PARQUE BIGINT NOT NULL AUTO_INCREMENT,
-      NOMBRE VARCHAR(80) NOT NULL,
-      DESCRIPCION VARCHAR(200) DEFAULT NULL,
-      PRIMARY KEY (ID_PARQUE),
-      UNIQUE KEY UQ_PARQUES_NOMBRE (NOMBRE)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS parque_armas (
-      ID_PARQUE BIGINT NOT NULL,
-      SERIAL_ARMA VARCHAR(20) NOT NULL,
-      ASIGNADO_EN DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (ID_PARQUE, SERIAL_ARMA),
-      CONSTRAINT FK_PARQUE_ARMAS_PARQUE
-        FOREIGN KEY (ID_PARQUE) REFERENCES parques (ID_PARQUE)
-        ON DELETE CASCADE
-        ON UPDATE CASCADE,
-      CONSTRAINT FK_PARQUE_ARMAS_ARMA
-        FOREIGN KEY (SERIAL_ARMA) REFERENCES armas (SERIAL_ARMA)
-        ON DELETE CASCADE
-        ON UPDATE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-  `);
-}
-
-async function testConnection() {
   try {
-    const connection = await pool.getConnection();
-    console.log('Conectado a MySQL/MariaDB correctamente');
+    await connection.query('SELECT 1 AS ok');
+  } finally {
     connection.release();
-    await ensureCargadoresTable();
-    await ensureParquesTables();
-  } catch (error) {
-    console.error('Error conectando a MySQL/MariaDB:', error.message);
-    console.log('Verifica que el servicio este levantado y que server/.env sea correcto');
   }
 }
 
-testConnection();
+app.get('/api/health', async (_req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT 1 AS ok');
+    const databaseOk = Array.isArray(rows) && rows[0] && rows[0].ok === 1;
+
+    res.json({
+      status: 'ok',
+      database: databaseOk ? 'ok' : 'unknown',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error en GET /api/health:', error);
+    res.status(503).json({
+      status: 'error',
+      database: 'unavailable',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
 
 app.get('/api/personal', async (req, res) => {
   try {
@@ -918,9 +938,9 @@ app.get('/api/movimientos/ultimos', async (req, res) => {
 });
 
 app.post('/api/movimientos', async (req, res) => {
-  const connection = await pool.getConnection();
-
+  let connection;
   try {
+    connection = await pool.getConnection();
     const {
       TIPO_MOVIMIENTO,
       ID_CEDULA_PERSONAL,
@@ -996,10 +1016,14 @@ app.post('/api/movimientos', async (req, res) => {
     await connection.commit();
     res.status(201).json(createdRows[0]);
   } catch (error) {
-    await connection.rollback();
+    if (connection) {
+      await connection.rollback();
+    }
     sendInternalError(res, 'Error en POST /api/movimientos:', error);
   } finally {
-    connection.release();
+    if (connection) {
+      connection.release();
+    }
   }
 });
 
@@ -1300,7 +1324,19 @@ app.delete('/api/catalogos/companias/:id', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en http://localhost:${PORT}`);
-  console.log(`Base de datos: ${process.env.DB_NAME || 'control_armamento_nfc'}`);
-});
+module.exports = app;
+
+if (require.main === module) {
+  app.listen(PORT, async () => {
+    console.log(`Servidor corriendo en http://localhost:${PORT}`);
+    console.log(`Base de datos: ${process.env.DB_NAME || 'control_armamento_nfc'}`);
+
+    try {
+      await pingDatabase();
+      console.log('Conectado a MySQL/MariaDB correctamente');
+    } catch (error) {
+      console.error('Error conectando a MySQL/MariaDB:', error.message);
+      console.log('Verifica que el servicio este levantado y que server/.env sea correcto');
+    }
+  });
+}

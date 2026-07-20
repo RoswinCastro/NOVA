@@ -1,7 +1,11 @@
 node_modules/
 dist/
 .env
+.env.local
+.env.*.local
 server/.env
+server/.env.local
+server/.env.*.local
 server/node_modules/
 .DS_Store
 Thumbs.db
